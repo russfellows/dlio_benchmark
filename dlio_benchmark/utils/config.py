@@ -146,6 +146,12 @@ class ConfigArguments:
     pin_memory: bool = True
     odirect: bool = False
 
+    # Parquet-specific configuration
+    parquet_columns: ClassVar[List[Dict[str, Any]]] = []
+    parquet_row_group_size: int = 1000000
+    parquet_read_mode: str = "default"
+    parquet_partition_by: str = None
+
     # derived fields
     required_samples: int = 1
     total_samples_eval: int = 1
@@ -753,6 +759,19 @@ def LoadConfig(args, config):
             args.format = FormatType(config['dataset']['format'])
         if 'keep_files' in config['dataset']:
             args.keep_files = config['dataset']['keep_files']
+        if 'parquet' in config['dataset']:
+            parquet_cfg = config['dataset']['parquet']
+            if 'columns' in parquet_cfg:
+                if isinstance(parquet_cfg['columns'], (list, DictConfig)):
+                    args.parquet_columns = OmegaConf.to_container(parquet_cfg['columns']) if isinstance(parquet_cfg['columns'], DictConfig) else parquet_cfg['columns']
+                else:
+                    args.parquet_columns = parquet_cfg['columns']
+            if 'row_group_size' in parquet_cfg:
+                args.parquet_row_group_size = parquet_cfg['row_group_size']
+            if 'read_mode' in parquet_cfg:
+                args.parquet_read_mode = parquet_cfg['read_mode']
+            if 'partition_by' in parquet_cfg:
+                args.parquet_partition_by = parquet_cfg['partition_by']
 
     # data reader
     reader = None
