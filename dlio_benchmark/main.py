@@ -69,8 +69,12 @@ class DLIOBenchmark(object):
         t0 = time()
         self.args = ConfigArguments.get_instance()
         LoadConfig(self.args, cfg)
-        self.storage = StorageFactory().get_storage(self.args.storage_type, self.args.storage_root,
-                                                    self.args.framework)
+        self.storage = StorageFactory().get_storage(
+            self.args.storage_type,
+            self.args.storage_root,
+            self.args.framework,
+            getattr(self.args, 'storage_library', None)
+        )
 
         self.output_folder = self.args.output_folder
         os.makedirs(self.args.output_folder, mode=0o755, exist_ok=True)

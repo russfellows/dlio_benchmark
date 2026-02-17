@@ -23,7 +23,7 @@ import logging
 from typing import Any, Dict, List, ClassVar, Union
 
 from dlio_benchmark.common.constants import MODULE_CONFIG
-from dlio_benchmark.common.enumerations import StorageType, FormatType, Shuffle, ReadType, FileAccess, Compression, \
+from dlio_benchmark.common.enumerations import StorageType, StorageLibrary, FormatType, Shuffle, ReadType, FileAccess, Compression, \
     FrameworkType, \
     DataLoaderType, Profiler, DataLoaderSampler, CheckpointLocationType, CheckpointMechanismType, CheckpointModeType
 from dlio_benchmark.utils.utility import DLIOMPI, get_trace_name, utcnow
@@ -52,8 +52,10 @@ class ConfigArguments:
     sample_shuffle: Shuffle = Shuffle.OFF
     read_type: ReadType = ReadType.ON_DEMAND
     file_access: FileAccess = FileAccess.MULTI
-    storage_root: str = None
+    # Set root as the current directory by default
+    storage_root: str = "./"
     storage_type: StorageType = StorageType.LOCAL_FS
+    storage_library: Optional[StorageLibrary] = None  # For S3: s3torchconnector, s3dlio, minio
     storage_options: Optional[Dict[str, str]] = None
     record_length: int = 64 * 1024
     record_length_stdev: int = 0
@@ -66,17 +68,18 @@ class ConfigArguments:
     generate_data: bool = False
     generate_only: bool = False
     log_level: int = OUTPUT_LEVEL
-    data_folder: str = "data/"
+    data_folder: str = "./data/"
     output_folder: str = None
     metric_exclude_start_steps: int = 1
     metric_exclude_end_steps: int = 0
-    checkpoint_folder: str = "checkpoints/"
+    checkpoint_folder: str = "./checkpoints/"
     log_file: str = "dlio.log"
     file_prefix: str = "img"
     keep_files: bool = True
     do_profiling: bool = False
     profiler: Profiler = Profiler.IOSTAT
     seed: int = 123
+    data_gen_method: str = None  # 'dgen' (fast, zero-copy) or 'numpy' (legacy). Defaults to env DLIO_DATA_GEN or auto-detect
     do_checkpoint: bool = False
     do_train: bool = True
     checkpoint_after_epoch: int = 1
@@ -413,6 +416,29 @@ class ConfigArguments:
 
     @dlp.log
     def derive_configurations(self, file_list_train=None, file_list_eval=None):
+        # Initialize data generation method from config or environment
+        if self.data_gen_method is None:
+            self.data_gen_method = os.environ.get('DLIO_DATA_GEN', 'auto')
+        
+        # Log data generation method selection
+        from dlio_benchmark.utils.utility import HAS_DGEN
+        method = self.data_gen_method.lower()
+        if method == 'numpy' or (method in ['auto', 'dgen'] and not HAS_DGEN):
+            self.logger.output(f"{'='*80}")
+            self.logger.output(f"Data Generation Method: NUMPY (Legacy)")
+            self.logger.output(f"  Using NumPy random generation (155x slower than dgen-py)")
+            if method == 'dgen':
+                self.logger.output(f"  Note: dgen-py requested but not installed")
+                self.logger.output(f"  Install with: pip install dgen-py")
+            self.logger.output(f"  Set DLIO_DATA_GEN=dgen or dataset.data_gen_method=dgen for speedup")
+            self.logger.output(f"{'='*80}")
+        else:
+            self.logger.output(f"{'='*80}")
+            self.logger.output(f"Data Generation Method: DGEN (Optimized)")
+            self.logger.output(f"  Using dgen-py with zero-copy BytesView (155x faster, 0MB overhead)")
+            self.logger.output(f"  Set DLIO_DATA_GEN=numpy or dataset.data_gen_method=numpy for legacy mode")
+            self.logger.output(f"{'='*80}")
+        
         if self.checkpoint_mechanism == CheckpointMechanismType.NONE:
             if self.framework == FrameworkType.TENSORFLOW:
                 self.checkpoint_mechanism = CheckpointMechanismType.TF_SAVE
@@ -862,6 +888,8 @@ def LoadConfig(args, config):
     if 'storage' in config:
         if 'storage_type' in config['storage']:
             args.storage_type = StorageType(config['storage']['storage_type'])
+        if 'storage_library' in config['storage']:
+            args.storage_library = StorageLibrary(config['storage']['storage_library'])
         if 'storage_root' in config['storage']:
             args.storage_root = config['storage']['storage_root']
         if 'storage_options' in config['storage']:
@@ -902,6 +930,8 @@ def LoadConfig(args, config):
             args.file_prefix = config['dataset']['file_prefix']
         if 'format' in config['dataset']:
             args.format = FormatType(config['dataset']['format'])
+        if 'data_gen_method' in config['dataset']:
+            args.data_gen_method = config['dataset']['data_gen_method']
         if 'keep_files' in config['dataset']:
             args.keep_files = config['dataset']['keep_files']
         if 'record_element_bytes' in config['dataset']:
@@ -984,6 +1014,18 @@ def LoadConfig(args, config):
             args.transformed_record_dims = list(reader['transformed_record_dims'])
         if 'transformed_record_element_type' in reader:
             args.transformed_record_element_type = reader['transformed_record_element_type']
+        
+        # Storage configuration (multi-protocol architecture)
+        if 'storage_type' in reader:
+            args.storage_type = StorageType(reader['storage_type'])
+        if 'protocol' in reader:
+            args.protocol = reader['protocol']
+        if 'storage_library' in reader:
+            args.storage_library = reader['storage_library']
+        if 'storage_root' in reader:
+            args.storage_root = reader['storage_root']
+        if 'storage_options' in reader:
+            args.storage_options = reader['storage_options']
 
     # training relevant setting
     if 'train' in config:

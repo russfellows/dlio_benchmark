@@ -69,7 +69,7 @@ class S3PyTorchConnectorStorage(S3Storage):
 
     @dlp.log
     def create_namespace(self, exist_ok=False):
-        self.logger.notice(f"skipping create S3 bucket namespace, not implemented: {self.namespace.name}, exist_ok: {exist_ok}")
+        self.logger.info(f"skipping create S3 bucket namespace, not implemented: {self.namespace.name}, exist_ok: {exist_ok}")
         return True
 
     @dlp.log
