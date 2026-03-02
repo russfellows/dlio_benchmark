@@ -22,59 +22,19 @@ from time import time, sleep as base_sleep
 from functools import wraps
 import threading
 import json
-from typing import Dict
-import pathlib
-from enum import Enum
-
-import numpy as np
-import inspect
-import psutil
 import socket
-import importlib.util
-# UTC timestamp format with microsecond precision
-from dlio_benchmark.common.enumerations import LoggerType, MPIState
-try:
-    from dftracer.logger import dftracer as PerfTrace, dft_fn as Profile, DFTRACER_ENABLE as DFTRACER_ENABLE
-except:
-    class Profile(object):
-        def __init__(self,  cat, name=None, epoch=None, step=None, image_idx=None, image_size=None):
-            return 
-        def log(self,  func):
-            return func
-        def log_init(self,  func):
-            return func
-        def iter(self,  func, iter_name="step"):
-            return func
-        def __enter__(self):
-            return
-        def __exit__(self, type, value, traceback):
-            return
-        def update(self, epoch=None, step=None, image_idx=None, image_size=None, args={}):
-            return
-        def flush(self):
-            return
-        def reset(self):
-            return
-        def log_static(self, func):
-            return func
-    class dftracer(object):
-        def __init__(self,):
-            self.type = None
-        def initialize_log(self, logfile=None, data_dir=None, process_id=-1):
-            return
-        def get_time(self):
-            return
-        def enter_event(self):
-            return
-        def exit_event(self):
-            return
-        def log_event(self, name, cat, start_time, duration, string_args=None):
-            return
-        def finalize(self):
-            return
-        
-    PerfTrace = dftracer()
-    DFTRACER_ENABLE = False
+import argparse
+
+import psutil
+import numpy as np
+
+from dlio_benchmark.common.enumerations import MPIState
+from dftracer.python import (
+    dftracer as PerfTrace,
+    dft_fn as Profile,
+    ai as dft_ai,
+    DFTRACER_ENABLE
+)
 
 LOG_TS_FORMAT = "%Y-%m-%dT%H:%M:%S.%f"
 
@@ -89,7 +49,6 @@ class DLIOLogger:
     __instance = None
 
     def __init__(self):
-        console_handler = logging.StreamHandler()
         self.logger = logging.getLogger("DLIO")
         #self.logger.setLevel(logging.DEBUG)
         if DLIOLogger.__instance is not None:
@@ -272,33 +231,6 @@ def timeit(func):
     return wrapper
 
 
-import tracemalloc
-from time import perf_counter
-
-
-def measure_performance(func):
-    '''Measure performance of a function'''
-
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        tracemalloc.start()
-        start_time = perf_counter()
-        func(*args, **kwargs)
-        current, peak = tracemalloc.get_traced_memory()
-        finish_time = perf_counter()
-
-        if DLIOMPI.get_instance().rank() == 0:
-            s = f'Resource usage information \n[PERFORMANCE] {"=" * 50}\n'
-            s += f'[PERFORMANCE] Memory usage:\t\t {current / 10 ** 6:.6f} MB \n'
-            s += f'[PERFORMANCE] Peak memory usage:\t {peak / 10 ** 6:.6f} MB \n'
-            s += f'[PERFORMANCE] Time elapsed:\t\t {finish_time - start_time:.6f} s\n'
-            s += f'[PERFORMANCE] {"=" * 50}\n'
-            DLIOLogger.get_instance().info(s)
-        tracemalloc.stop()
-
-    return wrapper
-
-
 def progress(count, total, status=''):
     """
     Printing a progress bar. Will be in the stdout when debug mode is turned on
@@ -390,3 +322,21 @@ def sleep(config):
     if sleep_time > 0.0:
         base_sleep(sleep_time)
     return sleep_time
+
+def gen_random_tensor(shape, dtype, rng=None):
+    if rng is None:
+        rng = np.random.default_rng()
+    if not np.issubdtype(dtype, np.integer):
+        # Only float32 and float64 are supported by rng.random
+        if dtype not in (np.float32, np.float64):
+            arr = rng.random(size=shape, dtype=np.float32)
+            return arr.astype(dtype)
+        else:
+            return rng.random(size=shape, dtype=dtype)
+    
+    # For integer dtypes, generate float32 first then scale and cast
+    dtype_info = np.iinfo(dtype)
+    records = rng.random(size=shape, dtype=np.float32)
+    records = records * (dtype_info.max - dtype_info.min) + dtype_info.min
+    records = records.astype(dtype)
+    return records

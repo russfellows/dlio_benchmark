@@ -19,22 +19,21 @@ import inspect
 import hydra
 
 import logging
-from time import time
 
-
-from typing import Any, Dict, List, ClassVar
+from typing import Any, Dict, List, ClassVar, Union
 
 from dlio_benchmark.common.constants import MODULE_CONFIG
 from dlio_benchmark.common.enumerations import StorageType, FormatType, Shuffle, ReadType, FileAccess, Compression, \
     FrameworkType, \
-    DataLoaderType, Profiler, DatasetType, DataLoaderSampler, CheckpointLocationType, CheckpointMechanismType, CheckpointModeType
+    DataLoaderType, Profiler, DataLoaderSampler, CheckpointLocationType, CheckpointMechanismType, CheckpointModeType
 from dlio_benchmark.utils.utility import DLIOMPI, get_trace_name, utcnow
-from dlio_benchmark.utils.utility import Profile, PerfTrace, DFTRACER_ENABLE, DLIOLogger, OUTPUT_LEVEL
+from dlio_benchmark.utils.utility import Profile, PerfTrace, DFTRACER_ENABLE, DLIOLogger, OUTPUT_LEVEL, gen_random_tensor
 from dataclasses import dataclass
 from omegaconf import OmegaConf, DictConfig
 import math
 import os
 import numpy as np
+from typing import Optional, Dict
 
 dlp = Profile(MODULE_CONFIG)
 @dataclass
@@ -56,6 +55,7 @@ class ConfigArguments:
     # Set root as the current directory by default
     storage_root: str = "./"
     storage_type: StorageType = StorageType.LOCAL_FS
+    storage_options: Optional[Dict[str, str]] = None
     record_length: int = 64 * 1024
     record_length_stdev: int = 0
     record_length_resize: int = 0
@@ -164,10 +164,10 @@ class ConfigArguments:
     total_samples_train: int = 1
     file_list_eval: ClassVar[List[str]] = []
     file_list_train: ClassVar[List[str]] = []
-    max_dimension: int = 1
+    max_dimension: Union[int, List[int]] = 1
     storage = None
     dimension_stdev: float = 0.0
-    dimension: int = 1
+    dimension: Union[int, List[int]] = 1
     training_steps: int = 0
     eval_steps: int = 0
     samples_per_thread: int = 1
@@ -181,6 +181,33 @@ class ConfigArguments:
     native_data_loader = False
     train_sample_index_sum = 1
     eval_sample_index_sum = 1
+
+    #################################################
+    # New API
+    #################################################
+    # dataset
+    record_dims: ClassVar[List[int]] = []
+    record_element_type: str = "uint8" # user provided
+
+    # dataset -- derived
+    record_element_bytes: int = 4
+    record_element_dtype: ClassVar[np.dtype] = np.dtype("uint8")
+
+    ## dataset: hdf5-only
+    num_dset_per_record: int = 1
+    chunk_dims: ClassVar[List[int]] = []
+    max_shape: ClassVar[List[int]] = []
+
+    ## reader
+    transformed_record_dims: ClassVar[List[int]] = []
+    transformed_record_element_type: str = "uint8" # user provided
+    ## reader -- derived
+    transformed_record_element_dtype: ClassVar[np.dtype] = np.dtype("uint8")
+
+    # s3 defaults
+    s3_region: str = "us-east-1"
+    s3_force_path_style = False
+    s3_max_attempts: int = 5
 
     def __init__(self):
         """ Virtually private constructor. """
@@ -315,24 +342,119 @@ class ConfigArguments:
         if self.ksm_present and self.checkpoint_randomize_tensor:
             raise Exception(f"checkpoint.ksm is {self.ksm_present} which requires checkpoint.randomize_tensor to be False")
 
+        # HDF5 specific checks        
+        if len(self.record_dims) > 0:
+            if self.record_dims[0] % self.num_dset_per_record != 0:
+                raise ValueError("hdf5.num_dset_per_record should be divisible by record_dims[0]")
+
+        # Image specific checks
+        if self.format in [FormatType.JPEG, FormatType.PNG]:
+            if np.dtype(self.record_element_type) != np.uint8:
+                # @ray: ensure compatibility with PIL fromarray (https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.fromarray)
+                raise ValueError(f"{self.format} format requires record_element_type to be np.uint8, this should be automatically set. Please contact developers if this message appears.")
+            if len(self.record_dims) > 2:
+                raise ValueError(f"{self.format} format does not support more than 2 dimensions, but got {len(self.record_dims)} dimensions.")
+
+        # check if both record_dims and record_length_stdev are set
+        if len(self.record_dims) > 0 and self.record_length_stdev > 0:
+            raise ValueError("Both record_dims and record_length_bytes_stdev are set. This is not supported. If you need stdev on your records, please specify record_length_bytes with record_length_bytes_stdev instead.")
+
+        # S3 specific checks
+        if self.storage_type == StorageType.S3 and self.framework == FrameworkType.PYTORCH:
+            if self.format not in (FormatType.NPZ, FormatType.NPY):
+                raise Exception(f"For S3 using PyTorch framework, only NPZ or NPY formats are supported. Got format {self.format}")
+
+            # Also validate that s3torchconnector dependency is available
+            try:
+                from s3torchconnector._s3client import S3Client, S3ClientConfig
+            except ImportError:
+                raise Exception(
+                    "The s3torchconnector package is required for S3 with PyTorch but is not installed. "
+                    "Please install it before running the benchmark data generation or loading for S3."
+                )
+
+            if self.do_checkpoint == True:
+                try:
+                    from s3torchconnector import S3Checkpoint
+                except ImportError:
+                    raise Exception(
+                        "The s3torchconnector package is required for S3 with PyTorch but is not installed. "
+                        "Please install it before running the benchmark checkpointing for S3."
+                    )
+                if self.checkpoint_mechanism != CheckpointMechanismType.PT_S3_SAVE:
+                    raise Exception(f"For S3 checkpointing using PyTorch framework, invalid mechanism type supported. Got mechanism type as {self.checkpoint_mechanism}")
+
+            if self.format == FormatType.NPY:
+                # Ensure the NPY S3 reader is used with s3
+                try:
+                    from dlio_benchmark.reader.npy_reader_s3 import NPYReaderS3
+                except ImportError:
+                    raise Exception(
+                        "S3 with NPY requires dlio_benchmark.reader.npy_reader_s3.NPYReaderS3, "
+                        "but it could not be imported. Ensure the module is available."
+                    )
+            elif self.format == FormatType.NPZ:
+                # Ensure the NPZ S3 reader is used with s3
+                try:
+                    from dlio_benchmark.reader.npz_reader_s3 import NPZReaderS3
+                except ImportError:
+                    raise Exception(
+                        "S3 with NPZ requires dlio_benchmark.reader.npz_reader_s3.NPZReaderS3, "
+                        "but it could not be imported. Ensure the module is available."
+                    )
+
+            # Validate required credentials is set for s3 (from config)
+            missing = []
+            access_key_id = self.storage_options.get("access_key_id")
+            if not access_key_id:
+                missing.append("storage_options['access_key_id']")
+            secret_access_key = self.storage_options.get("secret_access_key")
+            if not secret_access_key:
+                missing.append("storage_options['secret_access_key']")
+            endpoint = self.storage_options.get("endpoint_url")
+            if not endpoint:
+                missing.append("storage_options['endpoint_url']")
+            if missing:
+                raise Exception(
+                    "Missing required S3 credentials for s3torchconnector: " + ", ".join(missing)
+                )
+
+
     @staticmethod
     def reset():
         ConfigArguments.__instance = None
 
     @dlp.log
     def derive_configurations(self, file_list_train=None, file_list_eval=None):
-        self.dimension = int(math.sqrt(self.record_length))
-        self.dimension_stdev = self.record_length_stdev / 2.0 / math.sqrt(self.record_length)
-        self.max_dimension = self.dimension
         if self.checkpoint_mechanism == CheckpointMechanismType.NONE:
             if self.framework == FrameworkType.TENSORFLOW:
                 self.checkpoint_mechanism = CheckpointMechanismType.TF_SAVE
             elif self.framework == FrameworkType.PYTORCH:
-                self.checkpoint_mechanism = CheckpointMechanismType.PT_SAVE
-        if (self.record_length_resize > 0):
+                if self.storage_type == StorageType.S3:
+                    self.checkpoint_mechanism = CheckpointMechanismType.PT_S3_SAVE
+                else:
+                    self.checkpoint_mechanism = CheckpointMechanismType.PT_SAVE
+
+        record_dims_length = len(self.record_dims)
+        if record_dims_length > 0:
+            self.dimension = self.record_dims
+            self.dimension_stdev = self.record_length_stdev / 2.0 / self.record_length
+            self.max_dimension = int(math.sqrt(self.record_length))
+        else:
+            self.dimension = int(math.sqrt(self.record_length))
+            self.dimension_stdev = self.record_length_stdev / 2.0 / math.sqrt(self.record_length)
+            self.max_dimension = self.dimension
+
+        if self.record_length_resize > 0:
             self.max_dimension = int(math.sqrt(self.record_length_resize))
-        if (file_list_train != None and file_list_eval != None):
-            self.resized_image = np.random.randint(255, size=(self.max_dimension, self.max_dimension), dtype=np.uint8)
+
+        if (file_list_train is not None and file_list_eval is not None):
+            if self.transformed_record_dims is not None and len(self.transformed_record_dims) > 0:
+                self.logger.output(f"Generating random tensor with shape {self.transformed_record_dims} and dtype {self.transformed_record_element_dtype}")
+                rng = np.random.default_rng()
+                self.resized_image = gen_random_tensor(shape=self.transformed_record_dims, dtype=self.transformed_record_element_dtype, rng=rng)
+            else:
+                self.resized_image = np.random.randint(255, size=(self.max_dimension, self.max_dimension), dtype=np.uint8)
             self.file_list_train = file_list_train
             self.file_list_eval = file_list_eval
             self.num_files_eval = len(file_list_eval)
@@ -393,6 +515,26 @@ class ConfigArguments:
         elif self.data_loader == DataLoaderType.NATIVE_DALI:
             if self.format in [FormatType.JPEG, FormatType.PNG, FormatType.NPY, FormatType.TFRECORD]:
                 self.native_data_loader = True
+
+
+        # dimension-based derivations
+
+        if self.format in [FormatType.JPEG, FormatType.PNG]:
+            if self.record_element_type != "uint8":
+                # @ray: ensure compatibility with PIL fromarray (https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.fromarray)        
+                # force uint8 on image dataset
+                self.logger.warning(f"Image format {self.format} requires record_element_type to be np.uint8, but given {self.record_element_type}. Re-setting to np.uint8.")
+                self.record_element_type = "uint8"
+
+        # recalculate record_element_bytes if record_element_type is provided
+        # to make them consistent
+        self.record_element_dtype = np.dtype(self.record_element_type)
+        self.record_element_bytes = self.record_element_dtype.itemsize
+
+        # hdf5 specific derivations
+        self.record_length = np.prod(self.record_dims) * self.record_element_bytes
+
+        self.transformed_record_element_dtype = np.dtype(self.transformed_record_element_type)
 
     @dlp.log
     def build_sample_map_iter(self, file_list, total_samples, epoch_number):
@@ -465,7 +607,10 @@ class ConfigArguments:
             # OPTIMIZATION 1: Cache os.path.abspath() results per file (not per sample)
             # This reduces 4.3B filesystem calls to just 1024 calls
             cache_start = time.time()
-            abs_path_cache = {i: os.path.abspath(file_list[i]) for i in range(num_files)}
+            if self.storage_type == StorageType.LOCAL_FS:
+                abs_path_cache = {i: os.path.abspath(file_list[i]) for i in range(end_sample - start_sample + 1)}
+            else:
+                abs_path_cache = {i: file_list[i] for i in range(end_sample - start_sample + 1)}
             cache_time = time.time() - cache_start
             self.logger.info(f"Built abs_path_cache for {num_files} files in {cache_time:.4f}s")
             
@@ -532,6 +677,11 @@ def GetConfig(args, key):
             value = args.storage_type
         elif keys[1] == "storage_root":
             value = args.storage_root
+        elif keys[1] == "storage_options" and len(keys) > 2:
+            if args.storage_type == "s3":
+                option_key = keys[2]
+                if option_key in ["access_key_id", "secret_access_key", "endpoint_url", "region", "s3_force_path_style", "s3_max_attempts"]:
+                    value = config["storage"].get("storage_options", {}).get(option_key)
     
     if len(keys) > 1 and keys[0] == "dataset":
         if keys[1] == "record_length_bytes":
@@ -738,7 +888,7 @@ def GetConfig(args, key):
     if len(keys) > 0 and keys[0] == "metric":
         if len(keys) > 1 and keys[1] == "au":
             value = args.au
-    return str(value) if value else None
+    return str(value) if value is not None else None
 
 def LoadConfig(args, config):
     '''
@@ -752,6 +902,8 @@ def LoadConfig(args, config):
             args.storage_type = StorageType(config['storage']['storage_type'])
         if 'storage_root' in config['storage']:
             args.storage_root = config['storage']['storage_root']
+        if 'storage_options' in config['storage']:
+            args.storage_options = config['storage']['storage_options']
 
     # dataset related settings
     if 'dataset' in config:
@@ -790,6 +942,21 @@ def LoadConfig(args, config):
             args.format = FormatType(config['dataset']['format'])
         if 'keep_files' in config['dataset']:
             args.keep_files = config['dataset']['keep_files']
+        if 'record_element_bytes' in config['dataset']:
+            args.record_element_bytes = config['dataset']['record_element_bytes']
+        if 'record_element_type' in config['dataset']:
+            args.record_element_type = config['dataset']['record_element_type']
+        if 'record_dims' in config['dataset']:
+            args.record_dims = list(config['dataset']['record_dims'])
+
+        # hdf5 only config
+        if 'hdf5' in config['dataset']:
+            if 'chunk_dims' in config['dataset']['hdf5']:
+                args.chunk_dims = tuple(config['dataset']['hdf5']['chunk_dims'])
+            if 'num_dset_per_record' in config['dataset']['hdf5']:
+                args.num_dset_per_record = config['dataset']['hdf5']['num_dset_per_record']
+            if 'max_shape' in config['dataset']['hdf5']:
+                args.max_shape = list(config['dataset']['hdf5']['max_shape'])
         if 'parquet' in config['dataset']:
             parquet_cfg = config['dataset']['parquet']
             if 'columns' in parquet_cfg:
@@ -893,6 +1060,10 @@ def LoadConfig(args, config):
             args.preprocess_time["stdev"] = reader['preprocess_time_stdev']
         if 'pin_memory' in reader:
             args.pin_memory = reader['pin_memory']
+        if 'transformed_record_dims' in reader:
+            args.transformed_record_dims = list(reader['transformed_record_dims'])
+        if 'transformed_record_element_type' in reader:
+            args.transformed_record_element_type = reader['transformed_record_element_type']
 
     # training relevant setting
     if 'train' in config:

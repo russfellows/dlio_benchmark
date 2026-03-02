@@ -15,13 +15,10 @@
    limitations under the License.
 """
 import math
-import logging
-from time import time
 
 from dlio_benchmark.common.constants import MODULE_DATA_READER
-from dlio_benchmark.utils.utility import utcnow
-from dlio_benchmark.utils.utility import Profile
-from dlio_benchmark.common.enumerations import DatasetType, Shuffle
+from dlio_benchmark.utils.utility import utcnow, Profile
+from dlio_benchmark.common.enumerations import Shuffle
 from dlio_benchmark.reader.reader_handler import FormatReader
 import tensorflow as tf
 
@@ -82,6 +79,15 @@ class TFReader(FormatReader):
     @dlp.log
     def next(self):
         self.logger.debug(f"{utcnow()} Reading {len(self._file_list)} files thread {self.thread_index} rank {self._args.my_rank}")
+
+        # @ray: solution to prevent error when tf.data.Dataset cannot find files provided within self._file_list
+        # the use case is usually as follow: user is providing workload.dataset.num_files_eval=0 since they do not
+        # want to do any evaluation
+        # since this method (`next`) requires to return a iterator, we will just return an empty array where array
+        # itself is an iterator
+        if len(self._file_list) == 0:
+            return []
+
         filenames = tf.data.Dataset.list_files(self._file_list, shuffle=False)
         # sharding in the file list if we have enought files. 
         if (len(self._file_list) >= self._args.comm_size):
@@ -109,6 +115,7 @@ class TFReader(FormatReader):
 
         self._dataset = self._dataset.repeat()
         total = math.floor(len(self._file_list)/self._args.comm_size / self.batch_size * self._args.num_samples_per_file)
+        
         return self._dataset.take(total*self._args.epochs).prefetch(buffer_size=self._args.prefetch_size)
     
     @dlp.log

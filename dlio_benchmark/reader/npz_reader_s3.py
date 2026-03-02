@@ -14,28 +14,31 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 """
-import pandas as pd
+import numpy as np
+import io
 
+from dlio_benchmark.storage.storage_factory import StorageFactory
 from dlio_benchmark.common.constants import MODULE_DATA_READER
-from dlio_benchmark.utils.utility import Profile, dft_ai
-from dlio_benchmark.reader.reader_handler import FormatReader
+from dlio_benchmark.reader.npz_reader import NPZReader
+from dlio_benchmark.utils.utility import Profile
 
 dlp = Profile(MODULE_DATA_READER)
 
-
-class CSVReader(FormatReader):
+class NPZReaderS3(NPZReader):
     """
-    CSV Reader reader and iterator logic.
+    Reader for NPZ files using S3 protocol
     """
 
     @dlp.log_init
     def __init__(self, dataset_type, thread_index, epoch):
-        super().__init__(dataset_type, thread_index)
+        super().__init__(dataset_type, thread_index, epoch)
+        self.storage = StorageFactory().get_storage(self._args.storage_type, self._args.storage_root, self._args.framework)
 
     @dlp.log
     def open(self, filename):
-        super().open(filename)
-        return pd.read_csv(filename, compression="infer", header=None).to_numpy()
+        data = self.storage.get_data(filename, None)
+        image = io.BytesIO(data)
+        return np.load(image, allow_pickle=True)['x']
 
     @dlp.log
     def close(self, filename):
@@ -44,8 +47,8 @@ class CSVReader(FormatReader):
     @dlp.log
     def get_sample(self, filename, sample_index):
         super().get_sample(filename, sample_index)
-        image = self.open_file_map[filename][sample_index]
-        dft_ai.update(image_size=image.nbytes)
+        image = self.open_file_map[filename][..., sample_index]
+        dlp.update(image_size=image.nbytes)
 
     def next(self):
         for batch in super().next():
@@ -53,6 +56,7 @@ class CSVReader(FormatReader):
 
     @dlp.log
     def read_index(self, image_idx, step):
+        dlp.update(step=step)
         return super().read_index(image_idx, step)
 
     @dlp.log
@@ -64,3 +68,4 @@ class CSVReader(FormatReader):
 
     def is_iterator_based(self):
         return True
+

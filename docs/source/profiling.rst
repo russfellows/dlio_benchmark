@@ -281,20 +281,20 @@ The output is
 DFTracer
 --------------------------
 
-ttps://github.com/hariharan-devarajan/dftracer. A profiler developed for capturing I/O calls. If DFTracer is enabled, profiling trace will be generated at the end of the run. The profiler provides profiling information at both application levels and system I/O calls level. 
+https://github.com/LLNL/dftracer. A profiler developed for capturing I/O calls. If DFTracer is enabled, profiling trace will be generated at the end of the run. The profiler provides profiling information at both application levels and system I/O calls level.
 
 To enable this functionality, one has to install DFTracer throught 
 
 .. code-block:: bash 
 
     pip install dftracer
+    pip install dftracer[dfanalyzer]
 
-
-or 
+or
 
 .. code-block:: bash 
 
-    git clone git@github.com:hariharan-devarajan/dftracer.git
+    git clone git@github.com:LLNL/dftracer.git
     cd dftracer
     python setup.py build
     python setup.py install

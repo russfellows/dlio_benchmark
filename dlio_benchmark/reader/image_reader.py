@@ -14,15 +14,13 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 """
-import logging
-
 import numpy as np
 from PIL import Image
 
 from dlio_benchmark.common.constants import MODULE_DATA_READER
 from dlio_benchmark.reader.reader_handler import FormatReader
 from dlio_benchmark.utils.utility import utcnow
-from dlio_benchmark.utils.utility import Profile
+from dlio_benchmark.utils.utility import Profile, dft_ai
 
 dlp = Profile(MODULE_DATA_READER)
 
@@ -50,6 +48,7 @@ class ImageReader(FormatReader):
         super().get_sample(filename, sample_index)
         image = self.open_file_map[filename]
         dlp.update(image_size=image.nbytes)
+        dft_ai.update(image_size=image.nbytes)
 
     def next(self):
         for batch in super().next():
@@ -63,12 +62,6 @@ class ImageReader(FormatReader):
     def finalize(self):
         return super().finalize()
 
-    def is_index_based(self):
-        return True
-
-    def is_iterator_based(self):
-        return True
-    
     def is_index_based(self):
         return True
 
