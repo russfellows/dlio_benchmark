@@ -15,26 +15,19 @@
    limitations under the License.
 """
 """
-JPEG/PNG image reader using parallel/streaming fetch from object storage.
+JPEG/PNG image reader using parallel prefetch from S3-compatible object storage.
+See _s3_iterable_mixin.py for the full design rationale.
 
-Each image file contains exactly one sample (one image). Prefetch downloads the
-raw encoded bytes, decodes them with Pillow into a numpy uint8 array, and caches
-the result. DLIO's standard FormatReader.next() / read_index() machinery then
-drives training without any S3 I/O on the hot path.
+Each image file contains exactly one sample. Prefetch fetches the raw encoded bytes
+and stores only the byte count — no PIL or numpy decode is performed.
+DLIO's FormatReader.next() yields a pre-allocated random tensor regardless of file
+contents; only the byte count is needed for the image_size telemetry metric.
 
-Supported libraries:
-  s3dlio           — uses s3dlio.get_many() (parallel, up to 64 in-flight requests)
-  s3torchconnector — uses S3IterableDataset.from_objects() with sequential reader
-                     (single streaming GET per file via s3torchconnector's own API;
-                     no s3dlio dependency)
-  minio            — uses concurrent.futures.ThreadPoolExecutor with Minio SDK
-
-Each library is STRICTLY isolated — there is NO silent fallback to another
-library. Configuring a library that is not installed raises ImportError immediately
-at construction time, not later during I/O.
+Supported libraries (strictly isolated, no cross-library fallback):
+  s3dlio           — s3dlio.get_many(), up to 64 parallel requests, O(1) len(BytesView)
+  s3torchconnector — S3IterableDataset.from_objects() + sequential reader
+  minio            — ThreadPoolExecutor + Minio SDK, pooled TCP connections
 """
-import io
-import os
 
 from dlio_benchmark.common.constants import MODULE_DATA_READER
 from dlio_benchmark.reader.image_reader import ImageReader

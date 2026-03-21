@@ -125,7 +125,13 @@ class _S3IterableMixin:
                 ) from exc
 
         elif self._storage_library == "minio":
-            pass  # minio import validated lazily in _get_minio_client()
+            try:
+                from minio import Minio as _Minio  # noqa: F401
+            except ImportError as exc:
+                raise ImportError(
+                    f"{self.__class__.__name__}: storage_library='minio' requires "
+                    "the minio package. Install with: pip install minio"
+                ) from exc
 
         # (unknown library values are caught at _prefetch() time with ValueError)
 

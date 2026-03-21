@@ -36,8 +36,6 @@ Each library is STRICTLY isolated — there is NO silent fallback to another
 library. Configuring a library that is not installed raises ImportError immediately
 at construction time, not later during I/O.
 """
-import os
-
 from dlio_benchmark.common.constants import MODULE_DATA_READER
 from dlio_benchmark.reader.npy_reader import NPYReader
 from dlio_benchmark.reader._s3_iterable_mixin import _S3IterableMixin
