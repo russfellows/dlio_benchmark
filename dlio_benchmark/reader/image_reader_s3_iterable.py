@@ -15,10 +15,12 @@
    limitations under the License.
 """
 """
-NPY reader using parallel/streaming fetch from object storage.
+JPEG/PNG image reader using parallel/streaming fetch from object storage.
 
-NPY files contain a single array (no named key), so decode is simply
-np.load(BytesIO(data)) rather than np.load(BytesIO(data))['x'].
+Each image file contains exactly one sample (one image). Prefetch downloads the
+raw encoded bytes, decodes them with Pillow into a numpy uint8 array, and caches
+the result. DLIO's standard FormatReader.next() / read_index() machinery then
+drives training without any S3 I/O on the hot path.
 
 Supported libraries:
   s3dlio           — uses s3dlio.get_many() (parallel, up to 64 in-flight requests)
@@ -27,11 +29,6 @@ Supported libraries:
                      no s3dlio dependency)
   minio            — uses concurrent.futures.ThreadPoolExecutor with Minio SDK
 
-All objects assigned to this DLIO thread are prefetched before iteration begins.
-Note: listing is handled by ObjStoreLibStorage.list_objects(), which dispatches
-per library — each library (s3dlio, s3torchconnector, minio) handles its own
-listing independently. Delete is not yet implemented for object storage (no-op).
-
 Each library is STRICTLY isolated — there is NO silent fallback to another
 library. Configuring a library that is not installed raises ImportError immediately
 at construction time, not later during I/O.
@@ -39,20 +36,26 @@ at construction time, not later during I/O.
 import io
 import os
 import numpy as np
+from PIL import Image
 
 from dlio_benchmark.common.constants import MODULE_DATA_READER
-from dlio_benchmark.reader.npy_reader import NPYReader
+from dlio_benchmark.reader.image_reader import ImageReader
 from dlio_benchmark.utils.utility import Profile, utcnow
 
 dlp = Profile(MODULE_DATA_READER)
 
 
-class NPYReaderS3Iterable(NPYReader):
+class ImageReaderS3Iterable(ImageReader):
     """
-    Parallel-prefetch NPY reader for S3-compatible object stores.
+    Parallel-prefetch JPEG/PNG reader for S3-compatible object stores.
 
-    Replaces the sequential get_data()-per-object pattern of NPYReaderS3 with a
-    parallel prefetch of all objects assigned to this DLIO worker thread.
+    Replaces ImageReader.open(local_path) with a parallel prefetch of all
+    image objects assigned to this DLIO worker thread. Each image is decoded
+    from bytes to a numpy array during prefetch; open() simply returns the
+    cached array.
+
+    Images are 1 sample per file, so get_sample() and next() work identically
+    to the local ImageReader — no index arithmetic required.
     """
 
     @dlp.log_init
@@ -81,13 +84,13 @@ class NPYReaderS3Iterable(NPYReader):
                 from s3torchconnector.s3reader import S3ReaderConstructor as _S3RC  # noqa: F401
             except ImportError as exc:
                 raise ImportError(
-                    "NPYReaderS3Iterable: storage_library='s3torchconnector' requires "
+                    "ImageReaderS3Iterable: storage_library='s3torchconnector' requires "
                     "the s3torchconnector package. "
                     "Install with: pip install s3torchconnector"
                 ) from exc
 
         self.logger.info(
-            f"{utcnow()} NPYReaderS3Iterable [{self._storage_library}] "
+            f"{utcnow()} ImageReaderS3Iterable [{self._storage_library}] "
             f"thread={thread_index} epoch={epoch}"
         )
 
@@ -107,16 +110,17 @@ class NPYReaderS3Iterable(NPYReader):
         cache = {}
         for uri, data in results:
             obj_key = uri_to_key.get(uri, uri)
-            cache[obj_key] = np.load(io.BytesIO(bytes(data)), allow_pickle=True)
+            cache[obj_key] = np.asarray(Image.open(io.BytesIO(bytes(data))))
         return cache
 
     def _prefetch_s3torchconnector(self, obj_keys: list) -> dict:
-        """Fetch all objects using s3torchconnector's S3IterableDataset.
+        """Fetch all images using s3torchconnector's S3IterableDataset.
 
         Uses S3ReaderConstructor.sequential() for a single streaming GET per
-        object — no range splitting, no extra HEAD requests. S3IterableDataset
-        iterates in URI order, yielding one S3Reader (BufferedIOBase) per object.
-        np.load reads directly from the S3Reader — no intermediate copy.
+        object — appropriate for image files which must be decoded in full before
+        the pixel data is accessible.  S3IterableDataset iterates in URI order,
+        yielding one BufferedIOBase reader per object.  PIL.Image.open reads
+        directly from the reader without an intermediate copy.
 
         s3dlio is NOT required or used in any way when this method is called.
         """
@@ -140,9 +144,8 @@ class NPYReaderS3Iterable(NPYReader):
 
         cache = {}
         for obj_key, reader in zip(obj_keys, dataset):
-            # S3Reader is a BufferedIOBase — np.load consumes it without copying.
-            # NPY files return an ndarray directly (no dict key needed).
-            cache[obj_key] = np.load(reader, allow_pickle=True)
+            # reader is a BufferedIOBase — PIL.Image.open consumes it directly.
+            cache[obj_key] = np.asarray(Image.open(reader))
         return cache
 
     def _prefetch_minio(self, obj_keys: list) -> dict:
@@ -181,7 +184,7 @@ class NPYReaderS3Iterable(NPYReader):
             finally:
                 resp.close()
                 resp.release_conn()
-            return obj_key, np.load(io.BytesIO(raw), allow_pickle=True)
+            return obj_key, np.asarray(Image.open(io.BytesIO(raw)))
 
         n_workers = min(16, max(1, len(obj_keys)))
         cache = {}
@@ -200,12 +203,14 @@ class NPYReaderS3Iterable(NPYReader):
             return self._prefetch_minio(obj_keys)
         else:
             raise ValueError(
-                f"NPYReaderS3Iterable: unknown storage_library {lib!r}; "
+                f"ImageReaderS3Iterable: unknown storage_library {lib!r}; "
                 f"supported: s3dlio, s3torchconnector, minio"
             )
 
     @dlp.log
     def open(self, filename):
+        # Return the pre-fetched, already-decoded numpy array.
+        # If somehow not cached (e.g. read_index before next()), fetch on demand.
         return self._object_cache.get(filename)
 
     @dlp.log
@@ -227,8 +232,8 @@ class NPYReaderS3Iterable(NPYReader):
 
         if obj_keys:
             self.logger.info(
-                f"{utcnow()} NPYReaderS3Iterable thread={self.thread_index} "
-                f"prefetching {len(obj_keys)} objects via [{self._storage_library}]"
+                f"{utcnow()} ImageReaderS3Iterable thread={self.thread_index} "
+                f"prefetching {len(obj_keys)} images via [{self._storage_library}]"
             )
             self._object_cache = self._prefetch(obj_keys)
 

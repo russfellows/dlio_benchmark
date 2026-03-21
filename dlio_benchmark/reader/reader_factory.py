@@ -56,6 +56,15 @@ class ReaderFactory(object):
             elif _args.data_loader == DataLoaderType.NATIVE_DALI:
                 from dlio_benchmark.reader.dali_image_reader import DaliImageReader
                 return DaliImageReader(dataset_type, thread_index, epoch_number)
+            # Use S3 readers for both S3 and AIStore
+            elif _args.storage_type in (StorageType.S3, StorageType.AISTORE):
+                storage_library = (getattr(_args, "storage_options", {}) or {}).get("storage_library")
+                if storage_library in ("s3dlio", "s3torchconnector", "minio"):
+                    from dlio_benchmark.reader.image_reader_s3_iterable import ImageReaderS3Iterable
+                    return ImageReaderS3Iterable(dataset_type, thread_index, epoch_number)
+                # Fallthrough: unrecognized library — let ImageReader try (will fail with a clear PIL error)
+                from dlio_benchmark.reader.image_reader import ImageReader
+                return ImageReader(dataset_type, thread_index, epoch_number)
             else:
                 from dlio_benchmark.reader.image_reader import ImageReader
                 return ImageReader(dataset_type, thread_index, epoch_number)   
