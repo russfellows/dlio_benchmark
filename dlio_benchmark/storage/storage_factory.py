@@ -32,12 +32,7 @@ class StorageFactory(object):
 
     @staticmethod
     def get_storage(storage_type, namespace, framework=None):
-        print(f"[DEBUG StorageFactory] get_storage called:")
-        print(f"  storage_type = {storage_type!r}  (type: {type(storage_type).__name__})")
-        print(f"  namespace    = {namespace!r}")
-        print(f"  framework    = {framework!r}  (type: {type(framework).__name__})")
         if storage_type == StorageType.LOCAL_FS or storage_type == StorageType.DIRECT_FS:
-            print(f"[DEBUG StorageFactory] → FileStorage (local/direct)")
             return FileStorage(namespace, framework)
         elif storage_type == StorageType.AISTORE:
             # Native AIStore storage using official Python SDK
@@ -50,11 +45,8 @@ class StorageFactory(object):
         elif storage_type == StorageType.S3:
             from dlio_benchmark.common.enumerations import FrameworkType
             if framework == FrameworkType.PYTORCH:
-                print(f"[DEBUG StorageFactory] → ObjStoreLibStorage (S3 + PyTorch)")
                 from dlio_benchmark.storage.obj_store_lib import ObjStoreLibStorage
                 return ObjStoreLibStorage(namespace, framework)
-            print(f"[DEBUG StorageFactory] → S3Storage (S3, non-PyTorch framework)")
             return S3Storage(namespace, framework)
         else:
-            print(f"[DEBUG StorageFactory] → ERROR: unknown storage_type {storage_type!r}")
             raise Exception(str(ErrorCodes.EC1001))

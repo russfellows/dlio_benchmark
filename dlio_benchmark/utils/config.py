@@ -348,11 +348,8 @@ class ConfigArguments:
         if len(self.record_dims) > 0 and self.record_length_stdev > 0:
             raise ValueError("Both record_dims and record_length_bytes_stdev are set. This is not supported. If you need stdev on your records, please specify record_length_bytes with record_length_bytes_stdev instead.")
 
-        # AIStore specific checks (uses S3 generators/readers)
-        if self.storage_type == StorageType.AISTORE and self.framework == FrameworkType.PYTORCH:
-            if self.format not in (FormatType.NPZ, FormatType.NPY):
-                raise Exception(f"For AIStore using PyTorch framework, only NPZ or NPY formats are supported. Got format {self.format}")
-            
+        # AIStore specific checks
+        if self.storage_type == StorageType.AISTORE:
             # Validate that aistore SDK is available (check module-level flag
             # so mock-based tests can patch AISTORE_AVAILABLE without the real SDK)
             from dlio_benchmark.storage import aistore_storage as _ais_mod
@@ -361,22 +358,6 @@ class ConfigArguments:
                     "The aistore package is required for AIStore storage but is not installed. "
                     "Install it with: pip install aistore"
                 )
-            
-            # AIStore uses S3 generators/readers, so validate those exist
-            if self.format == FormatType.NPY:
-                try:
-                    from dlio_benchmark.reader.npy_reader_s3 import NPYReaderS3
-                except ImportError:
-                    raise Exception(
-                        "AIStore with NPY requires dlio_benchmark.reader.npy_reader_s3.NPYReaderS3"
-                    )
-            elif self.format == FormatType.NPZ:
-                try:
-                    from dlio_benchmark.reader.npz_reader_s3 import NPZReaderS3
-                except ImportError:
-                    raise Exception(
-                        "AIStore with NPZ requires dlio_benchmark.reader.npz_reader_s3.NPZReaderS3"
-                    )
 
         # S3 specific checks — all branches are storage_library-aware.
         # storage_type=s3 means "object storage"; storage_library selects which
@@ -1055,24 +1036,6 @@ def LoadConfig(args, config):
     '''
     Override the args by a system config (typically loaded from a YAML file)
     '''
-    print(f"[DEBUG LoadConfig] ENTRY \u2014 top-level config keys: {list(config.keys())}")
-    if 'storage' in config:
-        print(f"[DEBUG LoadConfig] storage section keys: {list(config['storage'].keys())}")
-        print(f"[DEBUG LoadConfig]   storage_type    = {config['storage'].get('storage_type', '<missing>')}")
-        print(f"[DEBUG LoadConfig]   storage_root    = {config['storage'].get('storage_root', '<missing>')}")
-        print(f"[DEBUG LoadConfig]   storage_library = {config['storage'].get('storage_library', '<missing>')}")
-        if 'storage_options' in config['storage']:
-            opts = config['storage']['storage_options']
-            print(f"[DEBUG LoadConfig]   storage_options keys: {list(opts.keys()) if hasattr(opts, 'keys') else opts}")
-            for k, v in (opts.items() if hasattr(opts, 'items') else {}.items()):
-                if 'key' in k.lower() or 'secret' in k.lower() or 'password' in k.lower():
-                    print(f"[DEBUG LoadConfig]     {k} = {'<set>' if v else '<empty>'}")
-                else:
-                    print(f"[DEBUG LoadConfig]     {k} = {v!r}")
-    if 'dataset' in config:
-        print(f"[DEBUG LoadConfig] dataset section: num_files_train={config['dataset'].get('num_files_train','<missing>')} data_folder={config['dataset'].get('data_folder','<missing>')} record_length_bytes={config['dataset'].get('record_length_bytes','<missing>')}")
-    if 'workflow' in config:
-        print(f"[DEBUG LoadConfig] workflow: {dict(config['workflow'])}")
     if 'framework' in config:
         args.framework = FrameworkType(config['framework'])
 
@@ -1394,16 +1357,4 @@ def LoadConfig(args, config):
         if 'au' in config['metric']:
             args.au = config['metric']['au']
 
-    print(f"[DEBUG LoadConfig] EXIT \u2014 final effective values:")
-    print(f"  framework      = {args.framework!r}")
-    print(f"  storage_type   = {args.storage_type!r}")
-    print(f"  storage_root   = {args.storage_root!r}")
-    print(f"  storage_options= {args.storage_options!r}")
-    print(f"  data_folder    = {args.data_folder!r}")
-    print(f"  num_files_train= {args.num_files_train!r}")
-    print(f"  record_length  = {args.record_length!r}  (record_length_bytes)")
-    print(f"  generate_data  = {args.generate_data!r}")
-    print(f"  do_train       = {args.do_train!r}")
-    print(f"  do_checkpoint  = {args.do_checkpoint!r}")
-    print(f"  epochs         = {args.epochs!r}")
-    print(f"  batch_size     = {args.batch_size!r}")
+
