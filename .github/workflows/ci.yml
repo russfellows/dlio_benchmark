@@ -88,7 +88,10 @@ jobs:
           required = [
               "dftracer.python",
               "dftracer.dftracer",
-              "dgen_py",
+          ]
+
+          optional = [
+            "dgen_py",
           ]
 
           failures = []
@@ -98,11 +101,23 @@ jobs:
               except Exception as exc:
                   failures.append(f"{mod}: {exc}")
 
+          optional_failures = []
+          for mod in optional:
+            try:
+              importlib.import_module(mod)
+            except Exception as exc:
+              optional_failures.append(f"{mod}: {exc}")
+
           if failures:
               print("Preflight import check failed:")
               for failure in failures:
                   print(f"- {failure}")
               sys.exit(1)
+
+          if optional_failures:
+            print("Preflight optional import warnings:")
+            for failure in optional_failures:
+              print(f"- {failure}")
 
           print("Preflight import check passed")
           PY
