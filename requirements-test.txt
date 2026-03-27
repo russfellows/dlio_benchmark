@@ -14,6 +14,7 @@ psutil>=5.9.8
 pydftracer>=2.0.2
 dftracer>=2.0.1
 pytest
+pytest-timeout
 pytest-xdist
 tensorflow>=2.13.1
 tensorflow_io>=0.33.0

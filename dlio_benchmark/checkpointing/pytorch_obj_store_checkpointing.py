@@ -158,7 +158,14 @@ class PyTorchObjStoreCheckpointing(PyTorchCheckpointing):
             )
 
         # Build StreamingCheckpointing once; reused for all save/load calls.
-        from mlpstorage.checkpointing import StreamingCheckpointing as _SC
+        try:
+            from mlpstorage.checkpointing import StreamingCheckpointing as _SC
+        except ImportError as exc:
+            raise ImportError(
+                "Object-store checkpointing requires mlpstorage. "
+                "Install mlpstorage in this environment to use "
+                "storage_library=minio/s3dlio/s3torchconnector checkpointing."
+            ) from exc
 
         # Detect MPI world size to throttle per-rank concurrency.
         # With 8 MPI ranks each uploading concurrently, per-rank parallelism

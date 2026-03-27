@@ -15,10 +15,11 @@
    limitations under the License.
 """
 import tensorflow as tf
+import numpy as np
 
 from dlio_benchmark.common.constants import MODULE_CHECKPOINT
 from dlio_benchmark.checkpointing.base_checkpointing import BaseCheckpointing
-from dlio_benchmark.utils.utility import Profile, dft_ai
+from dlio_benchmark.utils.utility import Profile, dft_ai, gen_random_tensor
 
 def get_tf_datatype(datatype):
     if datatype == "fp32":
