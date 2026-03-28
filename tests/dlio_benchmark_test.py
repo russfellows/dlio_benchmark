@@ -296,10 +296,10 @@ def test_checkpoint_epoch(framework, model_size, optimizers, num_layers, layer_p
         files_per_checkpoint = (num_model_files + num_optimizer_files + num_layer_files) * nranks
         if framework == "tensorflow":
             file_per_ckp = 2
-            num_check_files = epochs / epoch_per_ckp * (files_per_checkpoint * file_per_ckp + 1)
+            num_check_files = (epochs // epoch_per_ckp) * (files_per_checkpoint * file_per_ckp + 1)
             assert (len(load_bin) == num_check_files), f"files produced are {len(load_bin)} {num_check_files} {load_bin} "
         if framework == "pytorch":
-            num_check_files = epochs / epoch_per_ckp * files_per_checkpoint
+            num_check_files = (epochs // epoch_per_ckp) * files_per_checkpoint
             assert (len(load_bin) == num_check_files), f"files produced are {len(load_bin)} {num_check_files} {load_bin}"
         comm.Barrier()
         if comm.rank == 0:

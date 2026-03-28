@@ -188,7 +188,8 @@ def _run_benchmark(workload_dict: dict, phase: str = "", verify: bool = False) -
     comm.Barrier()
     log.info("%sDLIOBenchmark complete", tag)
     if comm.rank == 0 and verify:
-        output_jsons = glob.glob(bench.output_folder + "./*_output.json")
+        output_pattern = os.path.join(bench.output_folder, "*_output.json")
+        output_jsons = glob.glob(output_pattern)
         assert len(output_jsons) == bench.comm_size, (
             f"Expected {bench.comm_size} output JSON(s), found {len(output_jsons)}"
         )

@@ -97,7 +97,8 @@ def run_benchmark(cfg, storage_root="./", verify=True):
     benchmark.finalize()
     if comm.rank == 0 and verify:
         import glob
-        assert len(glob.glob(benchmark.output_folder + "./*_output.json")) == benchmark.comm_size
+        output_pattern = os.path.join(benchmark.output_folder, "*_output.json")
+        assert len(glob.glob(output_pattern)) == benchmark.comm_size
     return benchmark
 
 
