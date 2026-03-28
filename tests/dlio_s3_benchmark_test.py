@@ -254,6 +254,7 @@ def setup_test_env():
     s3_overrides = [
         f"++workload.storage.storage_type={storage_type}",
         f"++workload.storage.storage_root={storage_root}",
+        "++workload.storage.storage_options.storage_library=s3torchconnector",
         f"++workload.dataset.data_folder=s3://{storage_root}",
         "++workload.storage.storage_options.access_key_id=test-access-key",
         "++workload.storage.storage_options.secret_access_key=test-secret-key",
