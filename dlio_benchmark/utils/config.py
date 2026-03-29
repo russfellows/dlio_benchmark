@@ -78,6 +78,7 @@ class ConfigArguments:
     do_profiling: bool = False
     profiler: Profiler = Profiler.IOSTAT
     seed: int = 123
+    data_gen_method: str = None  # 'dgen' (fast, zero-copy) or 'numpy' (legacy). Defaults to env DLIO_DATA_GEN or auto-detect
     do_checkpoint: bool = False
     do_train: bool = True
     checkpoint_after_epoch: int = 1
@@ -145,18 +146,6 @@ class ConfigArguments:
     multiprocessing_context: str = "fork"
     pin_memory: bool = True
     odirect: bool = False
-
-    # Parquet-specific configuration
-    parquet_columns: ClassVar[List[Dict[str, Any]]] = []
-    parquet_field_specs: ClassVar[Dict[str, Dict[str, Any]]] = {}
-    parquet_row_group_size: int = 1000000
-    parquet_read_mode: str = "default"
-    parquet_partition_by: str = None
-    parquet_generation_batch_size: int = 0  # 0 means use row_group_size as default
-    
-    # Parquet reader optimization settings
-    row_group_cache_size: int = 4  # Number of row groups to cache in LRU cache
-    enable_prefetch_thread: bool = True  # Enable background prefetching of row groups
 
     # derived fields
     required_samples: int = 1
@@ -359,11 +348,8 @@ class ConfigArguments:
         if len(self.record_dims) > 0 and self.record_length_stdev > 0:
             raise ValueError("Both record_dims and record_length_bytes_stdev are set. This is not supported. If you need stdev on your records, please specify record_length_bytes with record_length_bytes_stdev instead.")
 
-        # AIStore specific checks (uses S3 generators/readers)
-        if self.storage_type == StorageType.AISTORE and self.framework == FrameworkType.PYTORCH:
-            if self.format not in (FormatType.NPZ, FormatType.NPY):
-                raise Exception(f"For AIStore using PyTorch framework, only NPZ or NPY formats are supported. Got format {self.format}")
-            
+        # AIStore specific checks
+        if self.storage_type == StorageType.AISTORE:
             # Validate that aistore SDK is available (check module-level flag
             # so mock-based tests can patch AISTORE_AVAILABLE without the real SDK)
             from dlio_benchmark.storage import aistore_storage as _ais_mod
@@ -372,47 +358,87 @@ class ConfigArguments:
                     "The aistore package is required for AIStore storage but is not installed. "
                     "Install it with: pip install aistore"
                 )
-            
-            # AIStore uses S3 generators/readers, so validate those exist
-            if self.format == FormatType.NPY:
-                try:
-                    from dlio_benchmark.reader.npy_reader_s3 import NPYReaderS3
-                except ImportError:
-                    raise Exception(
-                        "AIStore with NPY requires dlio_benchmark.reader.npy_reader_s3.NPYReaderS3"
-                    )
-            elif self.format == FormatType.NPZ:
-                try:
-                    from dlio_benchmark.reader.npz_reader_s3 import NPZReaderS3
-                except ImportError:
-                    raise Exception(
-                        "AIStore with NPZ requires dlio_benchmark.reader.npz_reader_s3.NPZReaderS3"
-                    )
 
-        # S3 specific checks
+        # S3 specific checks — all branches are storage_library-aware.
+        # storage_type=s3 means "object storage"; storage_library selects which
+        # SDK to use (minio, s3dlio, or s3torchconnector).  Do NOT conflate them.
         if self.storage_type == StorageType.S3 and self.framework == FrameworkType.PYTORCH:
-            if self.format not in (FormatType.NPZ, FormatType.NPY):
-                raise Exception(f"For S3 using PyTorch framework, only NPZ or NPY formats are supported. Got format {self.format}")
-
-            # Also validate that s3torchconnector dependency is available
-            try:
-                from s3torchconnector._s3client import S3Client, S3ClientConfig
-            except ImportError:
+            # storage_library is REQUIRED — there is no default.  Every object
+            # storage workload must explicitly declare which library to use.
+            storage_library = (self.storage_options or {}).get("storage_library")
+            if storage_library is None:
                 raise Exception(
-                    "The s3torchconnector package is required for S3 with PyTorch but is not installed. "
-                    "Please install it before running the benchmark data generation or loading for S3."
+                    "storage_options.storage_library is required when storage_type=s3. "
+                    "Add 'storage_library: <value>' under the 'storage:' section of your "
+                    "workload YAML (or pass storage.storage_options.storage_library=<value> "
+                    "via --param).  Supported values: minio, s3dlio, s3torchconnector."
                 )
 
-            if self.do_checkpoint == True:
+            if storage_library == "s3torchconnector":
+                # s3torchconnector only supports NPZ and NPY data formats for training.
+                # For checkpoint-only runs (train=False), data format doesn't apply.
+                if self.do_train and self.format not in (FormatType.NPZ, FormatType.NPY):
+                    raise Exception(f"For S3 using s3torchconnector, only NPZ or NPY formats are supported. Got format {self.format}")
+                # Validate that s3torchconnector is installed
                 try:
-                    from s3torchconnector import S3Checkpoint
+                    from s3torchconnector._s3client import S3Client, S3ClientConfig
                 except ImportError:
                     raise Exception(
-                        "The s3torchconnector package is required for S3 with PyTorch but is not installed. "
-                        "Please install it before running the benchmark checkpointing for S3."
+                        "storage_library=s3torchconnector is configured but the package is not installed. "
+                        "Install with: pip install s3torchconnector\n"
+                        "Or switch to: storage_library: minio  (or s3dlio)"
                     )
-                if self.checkpoint_mechanism != CheckpointMechanismType.PT_S3_SAVE:
-                    raise Exception(f"For S3 checkpointing using PyTorch framework, invalid mechanism type supported. Got mechanism type as {self.checkpoint_mechanism}")
+                if self.do_checkpoint:
+                    try:
+                        from s3torchconnector import S3Checkpoint
+                    except ImportError:
+                        raise Exception(
+                            "storage_library=s3torchconnector is configured but the package is not installed. "
+                            "Install with: pip install s3torchconnector"
+                        )
+                    if self.checkpoint_mechanism != CheckpointMechanismType.PT_S3_SAVE:
+                        raise Exception(
+                            f"For S3 checkpointing with s3torchconnector, checkpoint_mechanism must be "
+                            f"pt_s3_save. Got: {self.checkpoint_mechanism}"
+                        )
+
+            elif storage_library == "minio":
+                # Validate that minio SDK is installed
+                try:
+                    from minio import Minio  # noqa: F401
+                except ImportError:
+                    raise Exception(
+                        "storage_library=minio is configured but the minio package is not installed. "
+                        "Install with: pip install minio"
+                    )
+                if self.do_checkpoint:
+                    if self.checkpoint_mechanism != CheckpointMechanismType.PT_OBJ_SAVE:
+                        raise Exception(
+                            f"For S3 checkpointing with minio, checkpoint_mechanism must be "
+                            f"pt_obj_save. Got: {self.checkpoint_mechanism}"
+                        )
+
+            elif storage_library == "s3dlio":
+                # Validate that s3dlio is installed
+                try:
+                    import s3dlio  # noqa: F401
+                except ImportError:
+                    raise Exception(
+                        "storage_library=s3dlio is configured but the s3dlio package is not installed. "
+                        "Install with: pip install s3dlio"
+                    )
+                if self.do_checkpoint:
+                    if self.checkpoint_mechanism != CheckpointMechanismType.PT_OBJ_SAVE:
+                        raise Exception(
+                            f"For S3 checkpointing with s3dlio, checkpoint_mechanism must be "
+                            f"pt_obj_save. Got: {self.checkpoint_mechanism}"
+                        )
+
+            else:
+                raise Exception(
+                    f"Unknown storage_library: '{storage_library}'. "
+                    f"Supported values: s3torchconnector, minio, s3dlio"
+                )
 
             if self.format == FormatType.NPY:
                 # Ensure the NPY S3 reader is used with s3
@@ -433,20 +459,25 @@ class ConfigArguments:
                         "but it could not be imported. Ensure the module is available."
                     )
 
-            # Validate required credentials is set for s3 (from config)
+            # Validate required credentials are present in storage_options OR
+            # as standard AWS environment variables (AWS_ACCESS_KEY_ID, etc.).
+            # s3dlio and minio can both read standard AWS_ env vars natively,
+            # so we don't require them to be duplicated in storage_options.
+            opts = self.storage_options or {}
             missing = []
-            access_key_id = self.storage_options.get("access_key_id")
+            access_key_id = opts.get("access_key_id") or os.environ.get("AWS_ACCESS_KEY_ID")
             if not access_key_id:
-                missing.append("storage_options['access_key_id']")
-            secret_access_key = self.storage_options.get("secret_access_key")
+                missing.append("storage_options['access_key_id'] or AWS_ACCESS_KEY_ID env var")
+            secret_access_key = opts.get("secret_access_key") or os.environ.get("AWS_SECRET_ACCESS_KEY")
             if not secret_access_key:
-                missing.append("storage_options['secret_access_key']")
-            endpoint = self.storage_options.get("endpoint_url")
+                missing.append("storage_options['secret_access_key'] or AWS_SECRET_ACCESS_KEY env var")
+            endpoint = opts.get("endpoint_url") or os.environ.get("AWS_ENDPOINT_URL")
             if not endpoint:
-                missing.append("storage_options['endpoint_url']")
+                missing.append("storage_options['endpoint_url'] or AWS_ENDPOINT_URL env var")
             if missing:
                 raise Exception(
-                    "Missing required S3 credentials for s3torchconnector: " + ", ".join(missing)
+                    f"Missing required S3 credentials for storage_library={storage_library}: "
+                    + ", ".join(missing)
                 )
 
 
@@ -456,12 +487,60 @@ class ConfigArguments:
 
     @dlp.log
     def derive_configurations(self, file_list_train=None, file_list_eval=None):
+        # Initialize data generation method from config or environment.
+        # DEFAULT IS DGEN — not 'auto'. There is no silent fallback to numpy.
+        # To explicitly use numpy (comparison benchmarks only): DLIO_DATA_GEN=numpy
+        if self.data_gen_method is None:
+            self.data_gen_method = os.environ.get('DLIO_DATA_GEN', 'dgen')
+
+        # Log data generation method selection — only relevant when actually generating data
+        # (datagen or checkpoint workloads). Skip during training-only runs to avoid confusion.
+        if self.generate_data or self.do_checkpoint:
+            from dlio_benchmark.utils.utility import HAS_DGEN
+            method = self.data_gen_method.lower()
+            if method == 'numpy':
+                # Only reachable via explicit DLIO_DATA_GEN=numpy — warn loudly.
+                self.logger.output(f"{'='*80}")
+                self.logger.output(f"WARNING: Data Generation Method: NUMPY (Slow Legacy Path)")
+                self.logger.output(f"  Using NumPy random generation — 155x SLOWER than dgen-py")
+                self.logger.output(f"  This path is for explicit comparison benchmarks ONLY.")
+                self.logger.output(f"  Remove DLIO_DATA_GEN=numpy to restore dgen-py (default).")
+                self.logger.output(f"{'='*80}")
+            elif not HAS_DGEN:
+                # dgen is the default but dgen-py is not installed — warn and fall back.
+                self.logger.warning(
+                    "dgen-py is not installed — falling back to NumPy for data generation "
+                    "(~155x slower). Install dgen-py>=0.2.0 (requires Python>=3.11) for "
+                    "full performance, or set DLIO_DATA_GEN=numpy to suppress this warning."
+                )
+                self.data_gen_method = 'numpy'
+            else:
+                self.logger.output(f"{'='*80}")
+                self.logger.output(f"Data Generation Method: DGEN (default)")
+                self.logger.output(f"  dgen-py zero-copy BytesView — 155x faster than NumPy, 0 MB overhead")
+                self.logger.output(f"{'='*80}")
+        
         if self.checkpoint_mechanism == CheckpointMechanismType.NONE:
             if self.framework == FrameworkType.TENSORFLOW:
                 self.checkpoint_mechanism = CheckpointMechanismType.TF_SAVE
             elif self.framework == FrameworkType.PYTORCH:
                 if self.storage_type == StorageType.S3:
-                    self.checkpoint_mechanism = CheckpointMechanismType.PT_S3_SAVE
+                    # storage_type=s3 with PyTorch: choose mechanism based on storage_library.
+                    # s3torchconnector uses its native S3Checkpoint API (PT_S3_SAVE).
+                    # minio and s3dlio use the generic ObjStoreLib checkpoint (PT_OBJ_SAVE).
+                    # storage_library is REQUIRED — there is no default.
+                    storage_library = (self.storage_options or {}).get("storage_library")
+                    if storage_library is None:
+                        raise Exception(
+                            "storage_options.storage_library is required when storage_type=s3. "
+                            "Add 'storage_library: <value>' under the 'storage:' section of your "
+                            "workload YAML (or pass storage.storage_options.storage_library=<value> "
+                            "via --param).  Supported values: minio, s3dlio, s3torchconnector."
+                        )
+                    if storage_library == "s3torchconnector":
+                        self.checkpoint_mechanism = CheckpointMechanismType.PT_S3_SAVE
+                    else:
+                        self.checkpoint_mechanism = CheckpointMechanismType.PT_OBJ_SAVE
                 else:
                     self.checkpoint_mechanism = CheckpointMechanismType.PT_SAVE
 
@@ -600,7 +679,10 @@ class ConfigArguments:
                 for sample in sample_list:
                     samples_sum += sample
                     thread_index = (sample_index // self.samples_per_thread) % num_threads
-                    abs_path = os.path.abspath(file_list[file_index])
+                    if self.storage_type == StorageType.LOCAL_FS:
+                        abs_path = os.path.abspath(file_list[file_index])
+                    else:
+                        abs_path = file_list[file_index]
                     process_thread_file_map[thread_index].append((sample,
                                                 abs_path,
                                                 sample_list[sample_index] % self.num_samples_per_file))
@@ -610,9 +692,6 @@ class ConfigArguments:
 
     @dlp.log
     def get_global_map_index(self, file_list, total_samples, epoch_number):
-        import time
-        start_time = time.time()
-        
         process_thread_file_map = {}
         num_files = len(file_list)
         start_sample = 0
@@ -620,7 +699,7 @@ class ConfigArguments:
         samples_sum = 0
         if num_files > 0:
             end_sample = total_samples - 1
-            samples_per_proc = int(math.ceil(total_samples/self.comm_size))
+            samples_per_proc = int(math.ceil(total_samples/self.comm_size)) 
             start_sample = self.my_rank * samples_per_proc
             end_sample = (self.my_rank + 1) * samples_per_proc - 1
             if end_sample > total_samples - 1:
@@ -633,38 +712,16 @@ class ConfigArguments:
                 else:
                     np.random.seed(self.seed)
                 np.random.shuffle(sample_list)
-            
-            # OPTIMIZATION 1: Cache os.path.abspath() results per file (not per sample)
-            # This reduces 4.3B filesystem calls to just 1024 calls
-            cache_start = time.time()
-            if self.storage_type == StorageType.LOCAL_FS:
-                abs_path_cache = {i: os.path.abspath(file_list[i]) for i in range(end_sample - start_sample + 1)}
-            else:
-                abs_path_cache = {i: file_list[i] for i in range(end_sample - start_sample + 1)}
-            cache_time = time.time() - cache_start
-            self.logger.info(f"Built abs_path_cache for {num_files} files in {cache_time:.4f}s")
-            
-            # OPTIMIZATION 2: Use numpy vectorized operations for file_index and sample_index
-            vectorize_start = time.time()
-            file_indices = np.floor_divide(sample_list, self.num_samples_per_file).astype(int)
-            sample_indices = np.mod(sample_list, self.num_samples_per_file)
-            samples_sum = np.sum(sample_list)
-            vectorize_time = time.time() - vectorize_start
-            self.logger.info(f"Vectorized index calculations in {vectorize_time:.4f}s")
-            
-            # Build the dictionary using cached paths and vectorized indices
-            map_start = time.time()
-            for idx in range(len(sample_list)):
-                global_sample_index = sample_list[idx]
-                file_index = file_indices[idx]
-                sample_index = sample_indices[idx]
-                abs_path = abs_path_cache[file_index]  # O(1) lookup instead of filesystem call
+            for sample_index in range(end_sample - start_sample + 1):
+                global_sample_index = sample_list[sample_index]
+                samples_sum += global_sample_index
+                file_index = int(math.floor(global_sample_index/self.num_samples_per_file))
+                if self.storage_type == StorageType.LOCAL_FS:
+                    abs_path = os.path.abspath(file_list[file_index])
+                else:
+                    abs_path = file_list[file_index]
+                sample_index = global_sample_index % self.num_samples_per_file
                 process_thread_file_map[global_sample_index] = (abs_path, sample_index)
-            map_time = time.time() - map_start
-            self.logger.info(f"Built process_thread_file_map with {len(process_thread_file_map)} entries in {map_time:.4f}s")
-        
-        total_time = time.time() - start_time
-        self.logger.info(f"get_global_map_index() completed in {total_time:.4f}s (was ~60s before optimization)")
         return process_thread_file_map, samples_sum
 
     @dlp.log
@@ -677,6 +734,8 @@ class ConfigArguments:
                     np.random.seed(self.seed)
                 np.random.shuffle(self.file_list_train) 
                 np.random.shuffle(self.file_list_eval)
+        local_train_sample_sum = 0
+        local_eval_sample_sum = 0
         if self.data_loader_sampler == DataLoaderSampler.ITERATIVE:
             self.train_file_map, local_train_sample_sum = self.build_sample_map_iter(self.file_list_train, self.total_samples_train,
                                                              epoch_number)
@@ -920,6 +979,77 @@ def GetConfig(args, key):
             value = args.au
     return str(value) if value is not None else None
 
+
+def _load_dotenv(env_file: str = '.env') -> dict:
+    """Load key=value pairs from a .env file.
+
+    Returns an empty dict if the file does not exist or cannot be read.
+    Only the common subset of the .env format is supported (no variable
+    substitution, no multiline values).  The python-dotenv or dotenvy
+    package can be used as a more feature-complete alternative.
+
+    Precedence note: callers should prefer os.environ over these values;
+    this function only provides the raw file contents.
+    """
+    env_vars: dict = {}
+    if not os.path.exists(env_file):
+        return env_vars
+    try:
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, _, val = line.partition('=')
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key:
+                    env_vars[key] = val
+    except OSError:
+        pass
+    return env_vars
+
+
+def _apply_env_overrides(args: 'ConfigArguments', dotenv: dict) -> None:
+    """Apply environment-variable and .env-file overrides to *args*.
+
+    This is the single, centralised place where DLIO reads runtime
+    configuration from the process environment, implementing the
+    agreed-upon precedence chain:
+
+      1. CLI / Hydra YAML overrides  — already applied before this call
+      2. Shell environment variables (os.environ)
+      3. .env file                   (dotenv dict — values not in os.environ)
+      4. Hardcoded defaults          (ConfigArguments field defaults)
+
+    Only *unset* fields (those still at their None / sentinel value) are
+    touched, so explicit YAML or CLI values are always preserved.
+
+    Environment variables recognised here:
+
+      DLIO_OUTPUT_FOLDER   — directory for benchmark result JSON/logs.
+                             Equivalent to setting ``output.folder`` in YAML.
+      DLIO_DATA_GEN        — data-generation backend: 'dgen', 'numpy', or
+                             'auto' (default).  Also honoured in
+                             derive_configurations() for backward compat.
+    """
+    def _getenv(key: str):
+        """Return key from os.environ (higher priority) or .env file."""
+        return os.environ.get(key) or dotenv.get(key)
+
+    # output_folder: fill in only if not already set by YAML/CLI
+    if args.output_folder is None:
+        v = _getenv('DLIO_OUTPUT_FOLDER')
+        if v:
+            args.output_folder = v
+
+    # data_gen_method: 'auto' means the YAML didn't set it explicitly
+    if args.data_gen_method is None or args.data_gen_method == 'auto':
+        v = _getenv('DLIO_DATA_GEN')
+        if v:
+            args.data_gen_method = v.lower()
+
+
 def LoadConfig(args, config):
     '''
     Override the args by a system config (typically loaded from a YAML file)
@@ -933,7 +1063,19 @@ def LoadConfig(args, config):
         if 'storage_root' in config['storage']:
             args.storage_root = config['storage']['storage_root']
         if 'storage_options' in config['storage']:
-            args.storage_options = config['storage']['storage_options']
+            # Convert OmegaConf DictConfig to a plain Python dict so that callers
+            # can freely add new keys (e.g. storage_library promotion below).
+            # OmegaConf structs are closed by default and reject unknown keys.
+            opts = config['storage']['storage_options']
+            args.storage_options = OmegaConf.to_container(opts, resolve=True, throw_on_missing=False) if isinstance(opts, DictConfig) else dict(opts)
+        # storage.storage_library lives at the top-level of the storage section,
+        # not nested inside storage_options.  Inject it into storage_options here
+        # so that storage backends can find it via storage_options.get("storage_library")
+        # without reading raw environment variables.
+        if 'storage_library' in config['storage']:
+            if args.storage_options is None:
+                args.storage_options = {}
+            args.storage_options['storage_library'] = config['storage']['storage_library']
 
     # dataset related settings
     if 'dataset' in config:
@@ -970,6 +1112,8 @@ def LoadConfig(args, config):
             args.file_prefix = config['dataset']['file_prefix']
         if 'format' in config['dataset']:
             args.format = FormatType(config['dataset']['format'])
+        if 'data_gen_method' in config['dataset']:
+            args.data_gen_method = config['dataset']['data_gen_method']
         if 'keep_files' in config['dataset']:
             args.keep_files = config['dataset']['keep_files']
         if 'record_element_bytes' in config['dataset']:
@@ -987,48 +1131,6 @@ def LoadConfig(args, config):
                 args.num_dset_per_record = config['dataset']['hdf5']['num_dset_per_record']
             if 'max_shape' in config['dataset']['hdf5']:
                 args.max_shape = list(config['dataset']['hdf5']['max_shape'])
-        if 'parquet' in config['dataset']:
-            parquet_cfg = config['dataset']['parquet']
-            if 'columns' in parquet_cfg:
-                if isinstance(parquet_cfg['columns'], (list, DictConfig)):
-                    args.parquet_columns = OmegaConf.to_container(parquet_cfg['columns']) if isinstance(parquet_cfg['columns'], DictConfig) else parquet_cfg['columns']
-                else:
-                    args.parquet_columns = parquet_cfg['columns']
-                
-                # Transform parquet_columns list to parquet_field_specs dict
-                # This enables the reader to check the 'read' flag for each column
-                if isinstance(args.parquet_columns, list):
-                    args.parquet_field_specs = {}
-                    for col_spec in args.parquet_columns:
-                        if isinstance(col_spec, dict):
-                            col_name = col_spec.get('name', 'data')
-                            # Preserve all column attributes including 'read' flag
-                            # Default 'read' to True if not specified (backward compatibility)
-                            args.parquet_field_specs[col_name] = {
-                                'dtype': col_spec.get('dtype', 'float32'),
-                                'size': col_spec.get('size', 1),
-                                'read': col_spec.get('read', True)
-                            }
-                        else:
-                            # Handle simple string column names
-                            args.parquet_field_specs[str(col_spec)] = {
-                                'dtype': 'float32',
-                                'size': 1,
-                                'read': True
-                            }
-                else:
-                    # If parquet_columns is not a list, create empty field_specs
-                    args.parquet_field_specs = {}
-            else:
-                # No columns specified, use empty field_specs
-                args.parquet_field_specs = {}
-            
-            if 'row_group_size' in parquet_cfg:
-                args.parquet_row_group_size = parquet_cfg['row_group_size']
-            if 'read_mode' in parquet_cfg:
-                args.parquet_read_mode = parquet_cfg['read_mode']
-            if 'partition_by' in parquet_cfg:
-                args.parquet_partition_by = parquet_cfg['partition_by']
 
     # data reader
     reader = None
@@ -1234,6 +1336,8 @@ def LoadConfig(args, config):
                 args.metric_exclude_end_steps = int(config['output']['metric']['exclude_end_steps'])
 
     if args.output_folder is None:
+        # Apply env-var and .env overrides before falling back to Hydra/default
+        _apply_env_overrides(args, _load_dotenv())
         try:
             hydra_cfg = hydra.core.hydra_config.HydraConfig.get()
             args.output_folder = hydra_cfg['runtime']['output_dir']
@@ -1270,3 +1374,5 @@ def LoadConfig(args, config):
     if 'metric' in config:
         if 'au' in config['metric']:
             args.au = config['metric']['au']
+
+

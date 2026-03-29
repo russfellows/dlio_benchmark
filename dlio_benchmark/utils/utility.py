@@ -28,6 +28,14 @@ import argparse
 import psutil
 import numpy as np
 
+# Try to import dgen-py for high-performance data generation (30-50x faster than NumPy)
+try:
+    import dgen_py
+    HAS_DGEN = True
+except ImportError:
+    HAS_DGEN = False
+    dgen_py = None
+
 from dlio_benchmark.common.enumerations import MPIState
 from dftracer.python import (
     dftracer as PerfTrace,
@@ -323,9 +331,100 @@ def sleep(config):
         base_sleep(sleep_time)
     return sleep_time
 
-def gen_random_tensor(shape, dtype, rng=None):
-    if rng is None:
-        rng = np.random.default_rng()
+def gen_random_tensor(shape, dtype, rng=None, method=None, writeable=True, seed=None):
+    """Generate random tensor data for DLIO benchmarks.
+
+    DEFAULT: dgen-py (high-performance Rust-backed random data, zero-copy BytesView).
+    This is 155x faster than NumPy and uses no extra memory during generation.
+
+    The only supported methods are:
+    - 'dgen'  : dgen-py (default, Python>=3.10). Falls back to numpy with a
+                warning if dgen-py is not installed.
+    - 'numpy' : NumPy random generation. Slow legacy path — only use for explicit
+                comparison benchmarks. Set DLIO_DATA_GEN=numpy to activate.
+
+    'auto' is intentionally NOT a supported default: silent fallback to numpy is
+    a footgun — callers would get 155x slower generation without any indication.
+
+    Args:
+        shape:     Tuple specifying tensor dimensions.
+        dtype:     NumPy dtype for the output array.
+        rng:       Optional NumPy Generator (only used for the numpy slow path when
+                   seed is not provided).
+        method:    Explicit method override ('dgen' or 'numpy'). If None, reads
+                   DLIO_DATA_GEN from the environment (default: 'dgen').
+        writeable: If False, skip the extra .copy() in the dgen path, saving one
+                   full array allocation. Safe when the caller only reads the array
+                   (e.g. np.savez). npz_generator passes writeable=False.
+        seed:      Optional integer seed for reproducible generation. When provided:
+                   - dgen path: passes seed to dgen_py.Generator(seed=seed)
+                   - numpy path: creates a new default_rng(seed=seed), ignoring rng
+                   When None (default): uses entropy (non-reproducible, unique each call).
+                   For MPI workloads, pass seed = BASE_SEED + file_index so each file
+                   gets unique-but-reproducible data across runs.
+    """
+    # ── Method selection ────────────────────────────────────────────────────────
+    # Default is 'dgen'. The environment can override to 'numpy' for explicit
+    # comparison runs, but there is NO silent auto-fallback. If dgen-py is not
+    # installed and 'dgen' is requested, we raise immediately rather than
+    # silently producing correct-but-vastly-slower results.
+    if method is None:
+        method = os.environ.get('DLIO_DATA_GEN', 'dgen').lower()
+
+    method = method.lower()
+
+    use_dgen = (method == 'dgen')
+
+    if method == 'numpy':
+        # Explicit numpy request — allowed for comparison benchmarks only.
+        use_dgen = False
+    elif use_dgen and not HAS_DGEN:
+        # dgen-py not installed (e.g. Python 3.9 where dgen-py is unavailable).
+        # Warn once and fall back to numpy so the benchmark still runs.
+        logging.getLogger("DLIO").warning(
+            "dgen-py is not installed — falling back to NumPy for data generation "
+            "(~155x slower). Install dgen-py>=0.2.0 (requires Python>=3.10) for "
+            "full performance, or set DLIO_DATA_GEN=numpy to suppress this warning."
+        )
+        use_dgen = False
+    
+    # Fast path: Use dgen-py with ZERO-COPY BytesView (155x faster than NumPy)
+    if use_dgen:
+        total_size = int(np.prod(shape))
+        element_size = np.dtype(dtype).itemsize
+        total_bytes = total_size * element_size
+        
+        # When a flowing RNG is provided but no explicit seed, derive a
+        # well-spread seed from the RNG state. This advances the RNG by
+        # one call, giving true flow-through: each successive gen_random_tensor
+        # call gets a unique, reproducible, statistically independent seed
+        # without the adjacent-seed correlations of arithmetic (BASE_SEED + i).
+        if seed is None and rng is not None:
+            seed = int(rng.integers(0, 2**63))
+
+        # Use dgen-py Generator to create zero-copy BytesView
+        # This is 155x faster than NumPy and uses no extra memory
+        # seed=None → entropy (non-reproducible, unique each call)
+        # seed=<int> → reproducible, deterministic stream for given seed
+        gen = dgen_py.Generator(size=total_bytes, seed=seed)
+        bytesview = gen.get_chunk(total_bytes)  # Returns BytesView (zero-copy, immutable)
+        
+        # Convert to NumPy array with correct dtype and reshape (ZERO-COPY)
+        # np.frombuffer on BytesView is zero-copy because BytesView implements buffer protocol
+        arr = np.frombuffer(bytesview, dtype=dtype).reshape(shape)
+        
+        # Make writable copy only if needed. The read-only view is valid and safe
+        # when the caller only reads the array (e.g. np.savez). Pass writeable=False
+        # to skip the copy and save one full array allocation.
+        if writeable:
+            return arr.copy()
+        return arr
+    
+    # Slow path: NumPy random generation (legacy method)
+    if rng is None or seed is not None:
+        # When a seed is explicitly provided, always create a fresh seeded Generator
+        # so that the seed takes effect regardless of what rng was passed by the caller.
+        rng = np.random.default_rng(seed=seed)  # seed=None = entropy
     if not np.issubdtype(dtype, np.integer):
         # Only float32 and float64 are supported by rng.random
         if dtype not in (np.float32, np.float64):

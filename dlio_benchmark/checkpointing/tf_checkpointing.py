@@ -15,10 +15,11 @@
    limitations under the License.
 """
 import tensorflow as tf
+import numpy as np
 
 from dlio_benchmark.common.constants import MODULE_CHECKPOINT
 from dlio_benchmark.checkpointing.base_checkpointing import BaseCheckpointing
-from dlio_benchmark.utils.utility import Profile, dft_ai
+from dlio_benchmark.utils.utility import Profile, dft_ai, gen_random_tensor
 
 def get_tf_datatype(datatype):
     if datatype == "fp32":
@@ -57,16 +58,28 @@ class TFCheckpointing(BaseCheckpointing):
     def get_tensor_core(self, length, datatype="int8", randomize=True):
         tf_dtype = get_tf_datatype(datatype)
         if randomize:
-            if tf_dtype in [tf.float16, tf.float32, tf.float64, tf.bfloat16]:
-                tensor = tf.random.uniform(shape=(length,), minval=0, maxval=1, dtype=tf_dtype)
-            elif tf_dtype == tf.int8:
-                random_tensor = tf.random.uniform(shape=(length,), minval=-128, maxval=128, dtype=tf.int32)
-                tensor = tf.cast(random_tensor, dtype=tf.int8)
-            elif tf_dtype == tf.uint8:
-                random_tensor = tf.random.uniform(shape=(length,), minval=0, maxval=256, dtype=tf.int32)
-                tensor = tf.cast(random_tensor, dtype=tf.uint8)
-            else:
+            # Use gen_random_tensor() to leverage dgen-py (155x faster than tf.random)
+            # Maps TF dtype to numpy dtype for gen_random_tensor
+            dtype_map = {
+                tf.float32: np.float32,
+                tf.float16: np.float16,
+                tf.float64: np.float64,
+                tf.bfloat16: np.float32,  # NumPy doesn't have bfloat16, use float32 then convert
+                tf.int8: np.int8,
+                tf.uint8: np.uint8,
+            }
+            
+            if tf_dtype not in dtype_map:
                 raise Exception(f"Datatype {tf_dtype} cannot be randomized for random tensor generation.")
+            
+            np_dtype = dtype_map[tf_dtype]
+            
+            # Generate data using gen_random_tensor (auto-uses dgen-py if available)
+            np_array = gen_random_tensor(shape=(length,), dtype=np_dtype)
+            
+            # Convert to TensorFlow tensor
+            tensor = tf.convert_to_tensor(np_array, dtype=tf_dtype)
+            
         else:
             tensor = tf.ones((length), dtype=tf_dtype)
     

@@ -26,7 +26,8 @@ class CheckpointMechanismType(Enum):
     CUSTOM = 'custom'
     TF_SAVE = 'tf_save'
     PT_SAVE = 'pt_save'
-    PT_S3_SAVE = 'pt_s3_save'
+    PT_S3_SAVE = 'pt_s3_save'   # Alias for pt_obj_save; retained for config backward compatibility
+    PT_OBJ_SAVE = 'pt_obj_save' # Object-store checkpoint (minio, s3dlio, or s3torchconnector)
 
     def __str__(self):
         return self.value
@@ -56,6 +57,7 @@ class StorageType(Enum):
     Different types of underlying storage
     """
     LOCAL_FS = 'local_fs'
+    DIRECT_FS = 'direct_fs'
     PARALLEL_FS = 'parallel_fs'
     S3 = 's3'
     AISTORE = 'aistore'
@@ -135,7 +137,7 @@ class FormatType(Enum):
     MMAP_INDEXED_BINARY = 'mmap_indexed_binary'
     SYNTHETIC = 'synthetic'
     PARQUET = 'parquet'
-
+    
     def __str__(self):
         return self.value
 
@@ -279,9 +281,6 @@ class Compression(Enum):
     BZIP2 = 'bz2'
     ZIP = 'zip'
     XZ = 'xz'
-    LZ4 = 'lz4'
-    ZSTD = 'zstd'
-    SNAPPY = 'snappy'
 
     def __str__(self):
         return self.value

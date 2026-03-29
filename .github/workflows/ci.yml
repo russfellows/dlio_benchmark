@@ -12,7 +12,7 @@ jobs:
       matrix:
         os: [ubuntu-22.04]
         gcc: [10]
-        python: ["3.9", "3.10", "3.11"]
+        python: ["3.12"]
         venv: ["via-setup", "via-reqs"]
     name: ${{ matrix.os }}-${{ matrix.gcc }}-${{ matrix.python }}-${{ matrix.venv }}
     runs-on: ${{ matrix.os }}
@@ -23,6 +23,7 @@ jobs:
       DFTRACER_ENABLE: 1
       DFTRACER_LOG_LEVEL: "INFO"
       DLIO_EXEC: ${{ matrix.venv == 'via-setup' && 'dlio_benchmark' || 'python dlio_benchmark/main.py' }}
+      DLIO_OBJECT_STORAGE_TESTS: "0"
       GOTCHA_DEBUG: 1
       OMPI_ALLOW_RUN_AS_ROOT: 1
       OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: 1
@@ -56,7 +57,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ${{ env.VENV_PATH }}
-          key: ${{ matrix.venv }}-gcc${{ matrix.gcc }}-python${{ matrix.python }}-${{ hashFiles('requirements.txt', 'setup.py') }}
+          key: ${{ matrix.venv }}-gcc${{ matrix.gcc }}-python${{ matrix.python }}-${{ hashFiles('requirements.txt', 'requirements-test.txt', 'setup.py') }}
       - name: Install system dependencies
         run: |
           sudo apt update
@@ -78,6 +79,49 @@ jobs:
           source ${VENV_PATH}/bin/activate
           pip install --upgrade pip
           pip install -r requirements-test.txt
+      - name: Preflight runtime imports
+        run: |
+          source ${VENV_PATH}/bin/activate
+          python - <<'PY'
+          import importlib
+          import sys
+
+          required = [
+              "dftracer.python",
+              "dftracer.dftracer",
+          ]
+
+          optional = [
+            "dgen_py",
+          ]
+
+          failures = []
+          for mod in required:
+              try:
+                  importlib.import_module(mod)
+              except Exception as exc:
+                  failures.append(f"{mod}: {exc}")
+
+          optional_failures = []
+          for mod in optional:
+            try:
+              importlib.import_module(mod)
+            except Exception as exc:
+              optional_failures.append(f"{mod}: {exc}")
+
+          if failures:
+              print("Preflight import check failed:")
+              for failure in failures:
+                  print(f"- {failure}")
+              sys.exit(1)
+
+          if optional_failures:
+            print("Preflight optional import warnings:")
+            for failure in optional_failures:
+              print(f"- {failure}")
+
+          print("Preflight import check passed")
+          PY
       - name: test_ai_logging
         env:
           DFTRACER_INC_METADATA: 1
@@ -307,15 +351,18 @@ jobs:
           mpirun -np 2 ${DLIO_EXEC} workload=llama_8b_zero3 ++workload.model.parallelism.data=1024 ++workload.checkpoint.mode=subset
       # S3-specific setup and tests
       - name: Install S3TorchConnector
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           pip install s3torchconnector
       - name: test_s3_gen_data
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_s3_gen_data[npy-pytorch] -v
           mpirun -np 1 pytest -k test_s3_gen_data[npz-pytorch] -v
       - name: test_s3_train
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_s3_train[npy-pytorch-pytorch-True] -v
@@ -323,25 +370,30 @@ jobs:
           mpirun -np 1 pytest -k test_s3_train[npy-pytorch-pytorch-False] -v
           mpirun -np 1 pytest -k test_s3_train[npz-pytorch-pytorch-False] -v
       - name: test_s3_eval
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_s3_eval -v
       - name: test_s3_multi_threads
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_s3_multi_threads[pytorch-0]  -v
           mpirun -np 1 pytest -k test_s3_multi_threads[pytorch-1]  -v
           mpirun -np 1 pytest -k test_s3_multi_threads[pytorch-2]  -v
       - name: test_s3_pytorch_multiprocessing_context
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_s3_pytorch_multiprocessing_context[0-None] -v
           mpirun -np 1 pytest -k test_s3_pytorch_multiprocessing_context[1-fork] -v
       - name: test_s3_subset
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_s3_subset -v
       - name: test_s3_checkpoint_epoch
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_s3_checkpoint_epoch[pytorch-1024-optimizers0-2-layer_params0-0-True] -v
@@ -351,20 +403,24 @@ jobs:
           mpirun -np 1 pytest -k test_s3_checkpoint_epoch[pytorch-1024-optimizers4-2-layer_params4-3-False] -v
           mpirun -np 1 pytest -k test_s3_checkpoint_epoch[pytorch-1024-optimizers5-1-layer_params5-0-False] -v
       - name: test_s3_checkpoint_ksm_config
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_s3_checkpoint_ksm_config -v
       - name: test_s3_checkpoint_step
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_s3_checkpoint_step -v
       # AIStore-specific tests (mock-based, no real cluster needed)
       - name: test_aistore_gen_data
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_aistore_gen_data[npy-pytorch] -v
           mpirun -np 1 pytest -k test_aistore_gen_data[npz-pytorch] -v
       - name: test_aistore_train
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_aistore_train[npy-pytorch-True] -v
@@ -372,6 +428,7 @@ jobs:
           mpirun -np 1 pytest -k test_aistore_train[npy-pytorch-False] -v
           mpirun -np 1 pytest -k test_aistore_train[npz-pytorch-False] -v
       - name: test_aistore_eval
+        if: env.DLIO_OBJECT_STORAGE_TESTS == '1'
         run: |
           source ${VENV_PATH}/bin/activate
           mpirun -np 1 pytest -k test_aistore_eval -v

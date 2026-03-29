@@ -32,7 +32,7 @@ class StorageFactory(object):
 
     @staticmethod
     def get_storage(storage_type, namespace, framework=None):
-        if storage_type == StorageType.LOCAL_FS:
+        if storage_type == StorageType.LOCAL_FS or storage_type == StorageType.DIRECT_FS:
             return FileStorage(namespace, framework)
         elif storage_type == StorageType.AISTORE:
             # Native AIStore storage using official Python SDK
@@ -44,9 +44,9 @@ class StorageFactory(object):
             return AIStoreStorage(namespace, framework)
         elif storage_type == StorageType.S3:
             from dlio_benchmark.common.enumerations import FrameworkType
-            if framework == FrameworkType.PYTORCH:
-                from dlio_benchmark.storage.s3_torch_storage import S3PyTorchConnectorStorage
-                return S3PyTorchConnectorStorage(namespace, framework)
+            if framework in (FrameworkType.PYTORCH, FrameworkType.TENSORFLOW):
+                from dlio_benchmark.storage.obj_store_lib import ObjStoreLibStorage
+                return ObjStoreLibStorage(namespace, framework)
             return S3Storage(namespace, framework)
         else:
             raise Exception(str(ErrorCodes.EC1001))
