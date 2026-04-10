@@ -435,7 +435,7 @@ class DLIOPostProcessor:
             indent = TAB * indent
 
             # This value should be large enough to hold the largest field name + all inner tab-ing + a margin
-            left_align_space = len("W Bandwidth (MB/s):") + len(TAB) + len(HALF_TAB) + 10
+            left_align_space = len("W Bandwidth (MiB/s):") + len(TAB) + len(HALF_TAB) + 10
             fmt = "{:<" + f'{left_align_space}' + "}"
 
             outfile.write(f"{indent}{fmt.format('')}{format_list(TABLE_HEADER)}\n")
@@ -445,19 +445,19 @@ class DLIOPostProcessor:
                 if overall:
                     outfile.write(f"{indent}{fmt.format('Throughput Stats (over all epochs)')}\n")
                     outfile.write(f"{indent}{fmt.format('  Samples/s:')}{format_stats(stats_dict['samples/s'])}\n")
-                    outfile.write(f"{indent}{fmt.format('  MB/s (derived from Samples/s):')}{format_stats(stats_dict['MB/s'])}\n")
+                    outfile.write(f"{indent}{fmt.format('  MiB/s (derived from Samples/s):')}{format_stats(stats_dict['MB/s'])}\n")
                 else:
                     outfile.write(f"{indent}{fmt.format('Throughput Stats (over all steps)')}\n")
                     outfile.write(f"{indent}{fmt.format('  Samples/s:')}{format_stats(stats_dict['samples/s'])}\n")
-                    outfile.write(f"{indent}{fmt.format('  MB/s (derived from Samples/s):')}{format_stats(stats_dict['MB/s'])}\n")
+                    outfile.write(f"{indent}{fmt.format('  MiB/s (derived from Samples/s):')}{format_stats(stats_dict['MB/s'])}\n")
 
             outfile.write("\n")
             outfile.write(f"{indent}{fmt.format('I/O Stats (over all time segments)')}\n")
 
             for disk in self.disks:
                 outfile.write(f"{indent}{fmt.format(f'{HALF_TAB}Device: {disk}')}\n")
-                outfile.write(f"{indent}{fmt.format(f'{TAB}R Bandwidth (MB/s):')}{format_stats(stats_dict['disk'][disk]['rMB/s'])}\n")
-                outfile.write(f"{indent}{fmt.format(f'{TAB}W Bandwidth (MB/s):')}{format_stats(stats_dict['disk'][disk]['wMB/s'])}\n")
+                outfile.write(f"{indent}{fmt.format(f'{TAB}R Bandwidth (MiB/s):')}{format_stats(stats_dict['disk'][disk]['rMB/s'])}\n")
+                outfile.write(f"{indent}{fmt.format(f'{TAB}W Bandwidth (MiB/s):')}{format_stats(stats_dict['disk'][disk]['wMB/s'])}\n")
                 outfile.write(f"{indent}{fmt.format(f'{TAB}R IOPS:')}{format_stats(stats_dict['disk'][disk]['r/s'])}\n")
                 outfile.write(f"{indent}{fmt.format(f'{TAB}W IOPS:')}{format_stats(stats_dict['disk'][disk]['w/s'])}\n")
                 outfile.write(f"{indent}{fmt.format(f'{TAB}Avg R Time (ms):')}{format_stats(stats_dict['disk'][disk]['r_await'])}\n")

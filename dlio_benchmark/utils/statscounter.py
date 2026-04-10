@@ -124,7 +124,7 @@ class StatsCounter(object):
         data_per_node = self.MPI.npernode()*self.args.num_samples_per_file * self.args.num_files_train//self.MPI.size()*self.args.record_length
         self.summary['data_size_per_host_GB'] = data_per_node/1024./1024./1024.
         if self.MPI.rank() == 0 and self.args.do_train:
-            self.logger.info(f"Total amount of data each host will consume is {data_per_node/1024./1024./1024} GB; each host has {self.summary['host_memory_GB']} GB memory") 
+            self.logger.info(f"Total amount of data each host will consume is {data_per_node/1024./1024./1024} GiB; each host has {self.summary['host_memory_GB']} GiB memory") 
         if self.summary['data_size_per_host_GB'] <= self.output['host_memory_GB']:
             self.output['potential_caching'] = 1
             if self.MPI.rank() == 0 and self.args.do_train: 
@@ -205,20 +205,20 @@ class StatsCounter(object):
                 if self.args.do_train:
                     metric = metric + f"[METRIC] Training Accelerator Utilization [AU] (%): {np.mean(train_au):.4f} ({np.std(train_au):.4f})\n"
                     metric = metric + f"[METRIC] Training Throughput (samples/second): {np.mean(train_throughput):.4f} ({np.std(train_throughput):.4f})\n"
-                    metric = metric + f"[METRIC] Training I/O Throughput (MB/second): {np.mean(train_throughput)*self.record_size/1024/1024:.4f} ({np.std(train_throughput)*self.record_size/1024/1024:.4f})\n"
+                    metric = metric + f"[METRIC] Training I/O Throughput (MiB/second): {np.mean(train_throughput)*self.record_size/1024/1024:.4f} ({np.std(train_throughput)*self.record_size/1024/1024:.4f})\n"
                     metric = metric + f"[METRIC] train_au_meet_expectation: {self.summary['metric']['train_au_meet_expectation']}\n"
                 if self.args.do_checkpoint: 
                     if self.args.num_checkpoints_write > 0:
                         metric = metric + f"[METRIC] Checkpoint save duration (seconds): {self.summary['metric']['save_checkpoint_duration_mean_seconds']:.4f} ({self.summary['metric']['save_checkpoint_duration_stdev_seconds']:.4f})\n"
-                        metric = metric + f"[METRIC] Checkpoint save I/O Throughput (GB/second): {self.summary['metric']['save_checkpoint_io_mean_GB_per_second']:.4f} ({self.summary['metric']['save_checkpoint_io_stdev_GB_per_second']:.4f})\n"
+                        metric = metric + f"[METRIC] Checkpoint save I/O Throughput (GiB/second): {self.summary['metric']['save_checkpoint_io_mean_GB_per_second']:.4f} ({self.summary['metric']['save_checkpoint_io_stdev_GB_per_second']:.4f})\n"
                     if self.args.num_checkpoints_read > 0:
                         metric = metric + f"[METRIC] Checkpoint load duration (seconds): {self.summary['metric']['load_checkpoint_duration_mean_seconds']:.4f} ({self.summary['metric']['load_checkpoint_duration_stdev_seconds']:.4f})\n"
-                        metric = metric + f"[METRIC] Checkpoint load I/O Throughput (GB/second): {self.summary['metric']['load_checkpoint_io_mean_GB_per_second']:.4f} ({self.summary['metric']['load_checkpoint_io_stdev_GB_per_second']:.4f})\n"
+                        metric = metric + f"[METRIC] Checkpoint load I/O Throughput (GiB/second): {self.summary['metric']['load_checkpoint_io_mean_GB_per_second']:.4f} ({self.summary['metric']['load_checkpoint_io_stdev_GB_per_second']:.4f})\n"
 
                 if self.args.do_eval:
                     metric = metric + f"[METRIC] Eval Accelerator Utilization [AU] (%): {np.mean(eval_au):.4f} ({np.std(eval_au):.4f})\n"
                     metric = metric + f"[METRIC] Eval Throughput (samples/second): {np.mean(eval_throughput):.6f} ({np.std(eval_throughput):.6f})\n"
-                    metric = metric + f"[METRIC] Eval Throughput (MB/second): {np.mean(eval_throughput)*self.record_size/1024/1024:.6f} ({np.std(eval_throughput)*self.record_size/1024/1024:.6f})\n"
+                    metric = metric + f"[METRIC] Eval Throughput (MiB/second): {np.mean(eval_throughput)*self.record_size/1024/1024:.6f} ({np.std(eval_throughput)*self.record_size/1024/1024:.6f})\n"
                     metric = metric + f"[METRIC] eval_au_meet_expectation: {self.summary['metric']['eval_au_meet_expectation']}\n"
                 metric+="[METRIC] ==========================================================\n"
                 self.logger.output(metric)   
@@ -354,7 +354,7 @@ class StatsCounter(object):
         self.per_epoch_stats[epoch][f'save_ckpt{block}']['duration'] = float(duration.total_seconds())
         self.per_epoch_stats[epoch][f'save_ckpt{block}']['throughput'] = self.checkpoint_size / float(duration.total_seconds())
         if self.my_rank == 0:
-            self.logger.output(f"{ts} Finished saving checkpoint {block} for epoch {epoch} in {duration.total_seconds():.4f} s; Throughput: {self.per_epoch_stats[epoch][f'save_ckpt{block}']['throughput']:.4f} GB/s")
+            self.logger.output(f"{ts} Finished saving checkpoint {block} for epoch {epoch} in {duration.total_seconds():.4f} s; Throughput: {self.per_epoch_stats[epoch][f'save_ckpt{block}']['throughput']:.4f} GiB/s")
 
     def start_load_ckpt(self, epoch, block, steps_taken):
         ts = utcnow()
@@ -371,7 +371,7 @@ class StatsCounter(object):
         self.per_epoch_stats[epoch][f'load_ckpt{block}']['duration'] = float(duration.total_seconds())
         self.per_epoch_stats[epoch][f'load_ckpt{block}']['throughput'] = self.checkpoint_size / float(duration.total_seconds())
         if self.my_rank == 0:
-            self.logger.output(f"{ts} Finished loading checkpoint {block} for epoch {epoch} in {duration.total_seconds():.4f} s; Throughput: {self.per_epoch_stats[epoch][f'load_ckpt{block}']['throughput']:.4f} GB/s")
+            self.logger.output(f"{ts} Finished loading checkpoint {block} for epoch {epoch} in {duration.total_seconds():.4f} s; Throughput: {self.per_epoch_stats[epoch][f'load_ckpt{block}']['throughput']:.4f} GiB/s")
 
     def start_loading(self):
         self.start_time_loading = time()

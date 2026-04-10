@@ -239,19 +239,70 @@ def timeit(func):
     return wrapper
 
 
+# Module-level state for the Rich progress bar used by progress()
+_rich_progress_instance = None
+_rich_progress_task_id = None
+
+
 def progress(count, total, status=''):
+    """Display a progress bar for data generation operations.
+
+    Uses Rich when available (provides a proper animated spinner/bar), otherwise
+    falls back to plain stdout writing.  The ``\\r``-in-logger approach used
+    previously was unreliable in non-interactive terminals and log files.
     """
-    Printing a progress bar. Will be in the stdout when debug mode is turned on
-    """
-    bar_len = 60
-    filled_len = int(round(bar_len * count / float(total)))
-    percents = round(100.0 * count / float(total), 1)
-    bar = '=' * filled_len + ">" + '-' * (bar_len - filled_len)
-    if DLIOMPI.get_instance().rank() == 0:
-        DLIOLogger.get_instance().info("\r[INFO] {} {}: [{}] {}% {} of {} ".format(utcnow(), status, bar, percents, count, total))
-        if count == total:
-            DLIOLogger.get_instance().info("")
+    global _rich_progress_instance, _rich_progress_task_id
+
+    if DLIOMPI.get_instance().rank() != 0:
+        return
+
+    try:
+        from rich.progress import (
+            BarColumn, Progress, SpinnerColumn,
+            TextColumn, TimeElapsedColumn,
+        )
+
+        # Create a fresh progress bar at the start of a new sequence
+        if _rich_progress_instance is None or count == 1:
+            if _rich_progress_instance is not None:
+                try:
+                    _rich_progress_instance.stop()
+                except Exception:
+                    pass
+            _rich_progress_instance = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                TimeElapsedColumn(),
+                transient=True,
+            )
+            _rich_progress_instance.start()
+            _rich_progress_task_id = _rich_progress_instance.add_task(
+                status, total=total
+            )
+
+        _rich_progress_instance.update(
+            _rich_progress_task_id, completed=count, description=status
+        )
+
+        if count >= total:
+            _rich_progress_instance.stop()
+            _rich_progress_instance = None
+            _rich_progress_task_id = None
+
+    except Exception:
+        # Fallback: write directly to stdout (no \r in log messages)
+        bar_len = 60
+        filled_len = int(round(bar_len * count / float(total)))
+        percents = round(100.0 * count / float(total), 1)
+        bar = '=' * filled_len + ">" + '-' * (bar_len - filled_len - 1)
+        end = '\n' if count >= total else ''
+        os.sys.stdout.write(
+            f"\r[{bar}] {percents:.1f}%  {count}/{total}  {status}{end}"
+        )
         os.sys.stdout.flush()
+
 
 
 def str2bool(v):

@@ -43,6 +43,8 @@ class MinIOAdapter:
     
     def __init__(self, endpoint, access_key, secret_key, region=None, secure=True):
         from minio import Minio
+        import urllib3
+        import ssl
         # Parse endpoint to extract host and determine secure
         if endpoint:
             parsed = urlparse(endpoint if '://' in endpoint else f'http://{endpoint}')
@@ -50,13 +52,27 @@ class MinIOAdapter:
             secure = parsed.scheme == 'https' if parsed.scheme else secure
         else:
             host = "localhost:9000"
-            
+
+        # When TLS is in use, honour AWS_CA_BUNDLE for self-signed certificates.
+        http_client = None
+        if secure:
+            ca_bundle = os.environ.get("AWS_CA_BUNDLE")
+            if ca_bundle:
+                ctx = ssl.create_default_context(cafile=ca_bundle)
+                # maxsize must be set explicitly — urllib3 2.x defaults it to 1
+                # per pool. Minio uses num_parallel_uploads=3 threads for
+                # multipart uploads; without maxsize>=3 all but one connection
+                # is discarded on return, flooding logs with
+                # "Connection pool is full, discarding connection".
+                http_client = urllib3.PoolManager(ssl_context=ctx, maxsize=10)
+
         self.client = Minio(
             host,
             access_key=access_key,
             secret_key=secret_key,
             secure=secure,
-            region=region
+            region=region,
+            http_client=http_client,
         )
         
     def get_object(self, bucket_name, object_name, start=None, end=None):
@@ -220,7 +236,7 @@ class ObjStoreLibStorage(S3Storage):
 
         # Dynamically import and initialize the appropriate library
         if storage_library == "s3dlio":
-            logging.debug("ObjStoreLibStorage: using s3dlio — zero-copy multi-protocol (20-30 GB/s)")
+            logging.debug("ObjStoreLibStorage: using s3dlio — zero-copy multi-protocol (20-30 GiB/s)")
             try:
                 import s3dlio
                 # s3dlio reads AWS_ENDPOINT_URL for custom endpoints (MinIO, VAST, Ceph).
@@ -238,7 +254,7 @@ class ObjStoreLibStorage(S3Storage):
                 )
                 
         elif storage_library == "s3torchconnector":
-            logging.debug("ObjStoreLibStorage: using s3torchconnector — AWS official S3 connector (5-10 GB/s)")
+            logging.debug("ObjStoreLibStorage: using s3torchconnector — AWS official S3 connector (5-10 GiB/s)")
             if S3Client is None:
                 raise ImportError(
                     "s3torchconnector is not installed. "
@@ -246,7 +262,8 @@ class ObjStoreLibStorage(S3Storage):
                 )
             force_path_style_opt = self._args.s3_force_path_style
             if "s3_force_path_style" in storage_options:
-                force_path_style_opt = storage_options["s3_force_path_style"].strip().lower() == "true"
+                val = storage_options["s3_force_path_style"]
+                force_path_style_opt = val if isinstance(val, bool) else str(val).strip().lower() == "true"
                 
             max_attempts_opt = self._args.s3_max_attempts
             if "s3_max_attempts" in storage_options:
@@ -255,9 +272,12 @@ class ObjStoreLibStorage(S3Storage):
                 except (TypeError, ValueError):
                     max_attempts_opt = self._args.s3_max_attempts
                     
+            profile_opt = storage_options.get("s3_profile", None)
+
             s3_client_config = S3ClientConfig(
                 force_path_style=force_path_style_opt,
                 max_attempts=max_attempts_opt,
+                profile=profile_opt,
             )
             
             self.s3_client = S3Client(
@@ -267,7 +287,7 @@ class ObjStoreLibStorage(S3Storage):
             )
             
         elif storage_library == "minio":
-            logging.debug("ObjStoreLibStorage: using minio — MinIO native SDK (10-15 GB/s)")
+            logging.debug("ObjStoreLibStorage: using minio — MinIO native SDK (10-15 GiB/s)")
             try:
                 secure = storage_options.get("secure", True)
                 self.s3_client = MinIOAdapter(
@@ -371,7 +391,7 @@ class ObjStoreLibStorage(S3Storage):
         return super().delete_node(self.get_uri(id))
 
     # Threshold above which s3dlio uses MultipartUploadWriter instead of put_bytes.
-    # minio-py uses 5 MB; 16 MB is a good balance for MinIO with large objects.
+    # minio-py uses 5 MiB; 16 MiB is a good balance for MinIO with large objects.
     # Override via S3DLIO_MULTIPART_THRESHOLD_MB env var (set before import).
     _MULTIPART_THRESHOLD = int(os.environ.get("S3DLIO_MULTIPART_THRESHOLD_MB", "16")) * 1024 * 1024
 
@@ -391,8 +411,8 @@ class ObjStoreLibStorage(S3Storage):
             if payload_len >= self._MULTIPART_THRESHOLD:
                 # Use MultipartUploadWriter for large objects — sends multiple
                 # concurrent UploadPart requests instead of one giant single-part PUT.
-                # This is why minio-py is faster for 140 MB NPZ files.
-                logging.debug(f"put_data: s3dlio multipart upload {id} ({payload_len/1024/1024:.1f} MB, threshold={self._MULTIPART_THRESHOLD//1024//1024} MB)")
+                # This is why minio-py is faster for 140 MiB NPZ files.
+                logging.debug(f"put_data: s3dlio multipart upload {id} ({payload_len/1024/1024:.1f} MiB, threshold={self._MULTIPART_THRESHOLD//1024//1024} MiB)")
                 with self._s3dlio.MultipartUploadWriter.from_uri(id) as writer:
                     writer.write(payload)
             else:
