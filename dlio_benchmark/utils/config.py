@@ -618,6 +618,39 @@ class ConfigArguments:
             if self.format in [FormatType.JPEG, FormatType.PNG, FormatType.NPY, FormatType.TFRECORD]:
                 self.native_data_loader = True
 
+        # PR-4: Auto-derive multiprocessing_context for storage libraries that
+        # initialize async runtimes (Tokio, CUDA, gRPC) at import time.  When
+        # such a library is in use and the user has not explicitly overridden the
+        # default, switch to "spawn" so DataLoader workers start with a clean
+        # process rather than inheriting broken file-descriptors from the parent.
+        _spawn_required_libs = ("s3dlio", "s3torchconnector")
+        _storage_library_for_ctx = (self.storage_options or {}).get("storage_library")
+        if (_storage_library_for_ctx in _spawn_required_libs
+                and self.multiprocessing_context == "fork"):
+            self.logger.info(
+                f"Auto-setting multiprocessing_context='spawn' for "
+                f"storage_library='{_storage_library_for_ctx}'. "
+                "fork is unsafe with this library (async runtime destroyed in "
+                "forked child). Set reader.multiprocessing_context: spawn "
+                "explicitly in your YAML to suppress this message."
+            )
+            self.multiprocessing_context = "spawn"
+
+        # PR-5: Auto-size read_threads when the user has not set an explicit
+        # value (the dataclass default is 1).  Values > 1 in the YAML are
+        # treated as intentional and respected as-is.
+        _MAX_AUTO_READ_THREADS = 8
+        if self.read_threads == 1:
+            _cpu_count = os.cpu_count() or 1
+            _per_rank_cpu = max(1, _cpu_count // max(1, self.comm_size))
+            _auto_threads = min(_per_rank_cpu, _MAX_AUTO_READ_THREADS)
+            if _auto_threads > 1:
+                self.logger.info(
+                    f"Auto-sizing read_threads to {_auto_threads} "
+                    f"(cpu_count={_cpu_count}, comm_size={self.comm_size}). "
+                    "Set read_threads explicitly in your YAML to override."
+                )
+                self.read_threads = _auto_threads
 
         # dimension-based derivations
 
@@ -680,7 +713,10 @@ class ConfigArguments:
                                                 abs_path,
                                                 sample_list[sample_index] % self.num_samples_per_file))
                     sample_index += 1
-                    file_index = (sample_index // self.num_samples_per_file) % num_files
+                    # Carry the rank offset forward so each rank stays in its own
+                    # file partition. Without the offset, non-zero ranks fall back
+                    # to rank-0's file range on the second and subsequent samples.
+                    file_index = (self.my_rank * files_per_rank + sample_index // self.num_samples_per_file) % num_files
         return process_thread_file_map, samples_sum
 
     @dlp.log
