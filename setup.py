@@ -22,7 +22,7 @@ core_deps = [
     "omegaconf>=2.2.0",
     "pandas>=1.5.1",
     "psutil>=5.9.8",
-    # pydftracer is optional — install with: pip install dlio_benchmark[dftracer]
+    "pydftracer>=2.0.2",
 ]
 x86_deps = [
     f"hydra-core>={HYDRA_VERSION}",
