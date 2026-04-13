@@ -82,6 +82,8 @@ class DLIOBenchmark(object):
             <li> local variables </li>
         </ul>
         """
+        global dftracer, dftracer_initialize, dftracer_finalize
+
         t0 = time.time()
         self.args = ConfigArguments.get_instance()
         LoadConfig(self.args, cfg)
@@ -468,6 +470,7 @@ class DLIOBenchmark(object):
         """
         It finalizes the dataset once training is completed.
         """
+        global dftracer, dftracer_initialize, dftracer_finalize
 
         self.comm.barrier()
         if self.checkpointing_mechanism:
