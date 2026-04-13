@@ -58,7 +58,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ${{ env.VENV_PATH }}
-          key: ${{ matrix.venv }}-gcc${{ matrix.gcc }}-python${{ matrix.python }}-${{ hashFiles('requirements.txt', 'requirements-test.txt', 'setup.py') }}
+          key: ${{ matrix.venv }}-gcc${{ matrix.gcc }}-python${{ matrix.python }}-${{ hashFiles('requirements.txt', 'requirements-test.txt', 'setup.py', 'pyproject.toml') }}
       - name: Install system dependencies
         run: |
           sudo apt update
