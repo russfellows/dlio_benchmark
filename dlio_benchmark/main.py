@@ -16,13 +16,32 @@
 """
 import os
 import math
-from time import time
+import time
 import numpy as np
 
 # Reduce TF and CUDA logging
 
 import hydra
 from omegaconf import DictConfig
+from dlio_benchmark.common.enumerations import StorageType as _StorageType
+
+
+def _apply_settle_guard(args, comm) -> None:
+    """Sleep after data generation for eventual-consistency object stores.
+
+    Only activates when *both* conditions are true:
+      - ``args.storage_type`` is not ``LOCAL_FS`` (i.e. an object store)
+      - ``args.post_generation_settle_seconds > 0``
+
+    Rank-0 sleeps for the configured duration; then all ranks barrier so
+    they proceed together.  Default is 0.0 — zero behaviour change for
+    existing configs.
+    """
+    if (args.post_generation_settle_seconds > 0
+            and args.storage_type != _StorageType.LOCAL_FS):
+        if args.my_rank == 0:
+            time.sleep(args.post_generation_settle_seconds)
+        comm.barrier()
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['AUTOGRAPH_VERBOSITY'] = '0'
@@ -43,11 +62,6 @@ from dlio_benchmark.data_generator.generator_factory import GeneratorFactory
 from dlio_benchmark.storage.storage_factory import StorageFactory
 
 dlp = Profile(MODULE_DLIO_BENCHMARK)
-# To make sure the output folder is the same in all the nodes. We have to do this.
-
-dftracer_initialize = True
-dftracer_finalize   = True
-dtracer             = None
 
 class DLIOBenchmark(object):
     """
@@ -64,9 +78,7 @@ class DLIOBenchmark(object):
             <li> local variables </li>
         </ul>
         """
-        global dftracer, dftracer_initialize, dftracer_finalize
-
-        t0 = time()
+        t0 = time.time()
         self.args = ConfigArguments.get_instance()
         LoadConfig(self.args, cfg)
 
@@ -110,8 +122,6 @@ class DLIOBenchmark(object):
             self.logger.output(f"  epochs         = {self.args.epochs!r}")
             self.logger.output(f"  batch_size     = {self.args.batch_size!r}")
         
-        if dftracer_initialize:
-            dftracer = self.args.configure_dftracer(is_child=False, use_pid=False)
         with Profile(name=f"{self.__init__.__qualname__}", cat=MODULE_DLIO_BENCHMARK):
             mode = []
             if self.args.generate_data:
@@ -181,6 +191,7 @@ class DLIOBenchmark(object):
             self.comm.barrier()
             if self.args.my_rank == 0:
                 self.logger.output(f"{utcnow()} Generation done")
+            _apply_settle_guard(self.args, self.comm)
 
         if not self.generate_only and self.do_profiling:
             self.profiler.start()
@@ -451,8 +462,6 @@ class DLIOBenchmark(object):
         It finalizes the dataset once training is completed.
         """
 
-        global dftracer, dftracer_initialize, dftracer_finalize
-
         self.comm.barrier()
         if self.checkpointing_mechanism:
             self.checkpointing_mechanism.finalize()
@@ -475,8 +484,6 @@ class DLIOBenchmark(object):
             self.stats.finalize()
             self.stats.save_data()
         self.comm.barrier()
-        if dftracer_finalize and dftracer:
-            self.args.finalize_dftracer(dftracer)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
@@ -487,12 +494,10 @@ def run_benchmark(cfg: DictConfig):
     benchmark.finalize()
 
 def set_dftracer_initialize(status):
-    global dftracer, dftracer_initialize, dftracer_finalize
-    dftracer_initialize = status
+    pass  # dftracer is disabled
 
 def set_dftracer_finalize(status):
-    global dftracer, dftracer_initialize, dftracer_finalize
-    dftracer_finalize = status
+    pass  # dftracer is disabled
 
 def main() -> None:
     """
