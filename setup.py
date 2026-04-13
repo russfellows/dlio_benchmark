@@ -10,6 +10,7 @@ test_deps = [
     "pytest-timeout",
     "pytest-xdist",
     "dftracer>=2.0.1",
+    "pydftracer>=2.0.2",
 ]
 core_deps = [
     "Pillow>=9.3.0",
