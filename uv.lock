@@ -349,36 +349,6 @@ nvtx = [
 ]
 
 [[package]]
-name = "dftracer"
-version = "2.0.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "dftracer-utils" },
-    { name = "pybind11" },
-    { name = "pydftracer" },
-    { name = "setuptools" },
-    { name = "setuptools-scm", version = "9.2.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
-    { name = "setuptools-scm", version = "10.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3c/bf/269f8c437c885bf29ebccaa6ec6d246e5a71af4a8d617b0904ce3773172d/dftracer-2.0.2.tar.gz", hash = "sha256:25f3b36af4179fe4c87d19d64b49e163cf4875f54e3480700cad86bb5ad5d99d", size = 13523152 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/91/0c8317f08f30dd06aeacf847f59a6e31b289103c3b851283ac23d5cb2353/dftracer-2.0.2-cp310-cp310-manylinux_2_34_x86_64.whl", hash = "sha256:1be163786e3bb6cb92dcb102ce51507cd41c5bbedcda0ade9c8ef85ea3af0cd4", size = 8411783 },
-    { url = "https://files.pythonhosted.org/packages/18/5d/6270a4cf2acc44f9ccd287b47b03a8a943e3f25ea992b3b53d8a2ea8f83a/dftracer-2.0.2-cp310-cp310-manylinux_2_39_x86_64.whl", hash = "sha256:0c0dc881403f8e7b23be96a01d5e0c7d280bf1efb1b766836107a77821c84936", size = 8425934 },
-    { url = "https://files.pythonhosted.org/packages/7b/4c/086a5e37e2f2b44405ab98f558058aba523bcf25a179adbed884772d686d/dftracer-2.0.2-cp311-cp311-manylinux_2_34_x86_64.whl", hash = "sha256:59d27e8af555de6a839fface4b9c4cd08d0320e904c87c014581f4b3742fc29d", size = 8419449 },
-    { url = "https://files.pythonhosted.org/packages/4a/28/a1dab9bfd7b6f5cdbb4e1566fc58a34156c32f58caea4d5c2d593d57d381/dftracer-2.0.2-cp311-cp311-manylinux_2_39_x86_64.whl", hash = "sha256:0686aa7cb6f944e672dfe806d1982364ab000b5ce3405eeef2fe57a645da6a3a", size = 8434156 },
-    { url = "https://files.pythonhosted.org/packages/fc/cf/838f7e700da86e5edef6c7d5bd6358dc04692c33013bd9ebbb85d3b92171/dftracer-2.0.2-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:0b60d2d1bcd0cae44c8f7f495f117543924413388793aae5c3e6cd0e99722a6c", size = 8431658 },
-    { url = "https://files.pythonhosted.org/packages/43/6c/f7654574bff79740a83c79616b6eb349477622a379108f966ab9bd4d3b38/dftracer-2.0.2-cp312-cp312-manylinux_2_39_x86_64.whl", hash = "sha256:85325674b95491ff37315ae91742faa3659248f5520f55ad1405603d4015fd50", size = 8445477 },
-    { url = "https://files.pythonhosted.org/packages/e6/cb/2b880d60ed0d3c6a4072f22a179ef89687e28b231a463ed625a4750018d2/dftracer-2.0.2-cp39-cp39-manylinux_2_34_x86_64.whl", hash = "sha256:037c0a0d5f926161c581ee5e9b5276998eff67aa66734a81d366888bc6ba6458", size = 8412076 },
-    { url = "https://files.pythonhosted.org/packages/b8/49/360bbc3ad69dd6909d1fa92ac7108abe4da95ae12b710c811aba6ba45e95/dftracer-2.0.2-cp39-cp39-manylinux_2_39_x86_64.whl", hash = "sha256:ff6e58973b65a3719bee16dc5e5045cf561c1c0cb8f4b1584990b6adb73e9e56", size = 8419132 },
-]
-
-[[package]]
-name = "dftracer-utils"
-version = "0.0.5"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c5/0c/76c95c78ba1ab795ca3068c1f6ce1e8b620f58a5a2f0185efa9a0aa01172/dftracer_utils-0.0.5.tar.gz", hash = "sha256:efb930179894dd5ab28a331800dc10f635a50b6813a8ce34361b4f4247502b52", size = 115485 }
-
-[[package]]
 name = "dgen-py"
 version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -413,8 +383,13 @@ dependencies = [
     { name = "pillow", version = "11.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "pillow", version = "12.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "psutil" },
-    { name = "pydftracer" },
+    { name = "pyarrow", version = "21.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "pyarrow", version = "23.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "pyyaml" },
+    { name = "tensorflow" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "typing-extensions" },
 ]
 
 [package.optional-dependencies]
@@ -424,6 +399,9 @@ aistore = [
 dali = [
     { name = "nvidia-dali-cuda120", version = "1.53.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "nvidia-dali-cuda120", version = "2.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+]
+dftracer = [
+    { name = "pydftracer" },
 ]
 parquet = [
     { name = "pyarrow", version = "21.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -436,7 +414,6 @@ tensorflow = [
     { name = "tensorflow" },
 ]
 test = [
-    { name = "dftracer" },
     { name = "pytest", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "pytest", version = "9.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "pytest-timeout" },
@@ -450,10 +427,16 @@ torch = [
     { name = "torchvision", version = "0.26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "pytest", version = "9.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "pytest-timeout" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aistore", marker = "extra == 'aistore'" },
-    { name = "dftracer", marker = "extra == 'test'", specifier = ">=2.0.1" },
     { name = "dgen-py", marker = "python_full_version >= '3.11'", specifier = ">=0.2.2" },
     { name = "h5py", specifier = ">=3.11.0" },
     { name = "hydra-core", specifier = ">=1.3.2" },
@@ -464,17 +447,27 @@ requires-dist = [
     { name = "pandas", specifier = ">=1.5.1" },
     { name = "pillow", specifier = ">=9.3.0" },
     { name = "psutil", specifier = ">=5.9.8" },
+    { name = "pyarrow", specifier = ">=21.0.0" },
     { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=12.0.0" },
-    { name = "pydftracer", specifier = ">=2.0.2" },
+    { name = "pydftracer", marker = "extra == 'dftracer'", specifier = ">=2.0.2" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pytest-timeout", marker = "extra == 'test'" },
     { name = "pytest-xdist", marker = "extra == 'test'" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "s3torchconnector", marker = "extra == 's3'" },
+    { name = "tensorflow", specifier = ">=2.20.0" },
     { name = "tensorflow", marker = "extra == 'tensorflow'", specifier = ">=2.13.1" },
+    { name = "torch", specifier = ">=2.8.0" },
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.2.0" },
     { name = "torchaudio", marker = "extra == 'torch'" },
     { name = "torchvision", marker = "extra == 'torch'" },
+    { name = "typing-extensions", specifier = ">=4.15.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest-timeout", specifier = ">=2.4.0" },
 ]
 
 [[package]]
@@ -2996,15 +2989,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pybind11"
-version = "3.0.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/41/50/b83d65efc1914681f5aded4ce37c703408a9bb74829f27f041560ca52ffb/pybind11-3.0.3.tar.gz", hash = "sha256:00471cdb816882c484708bc5dde80815c8c11cea540ab2cc6410f5ddea434755", size = 587814 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ab/87/99f21e9b20899d6dc1bf7544cfe53e5fa17acc21bb267971a540425357d3/pybind11-3.0.3-py3-none-any.whl", hash = "sha256:fb5f8e4a64946b4dcc0451c83a8c384f803bc0a62dd1ba02f199e97dbc9aad4c", size = 313717 },
-]
-
-[[package]]
 name = "pydantic"
 version = "2.12.5"
 source = { registry = "https://pypi.org/simple" }
@@ -3445,55 +3429,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0d/1c/73e719955c59b8e424d015ab450f51c0af856ae46ea2da83eba51cc88de1/setuptools-81.0.0.tar.gz", hash = "sha256:487b53915f52501f0a79ccfd0c02c165ffe06631443a886740b91af4b7a5845a", size = 1198299 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/e3/c164c88b2e5ce7b24d667b9bd83589cf4f3520d97cad01534cd3c4f55fdb/setuptools-81.0.0-py3-none-any.whl", hash = "sha256:fdd925d5c5d9f62e4b74b30d6dd7828ce236fd6ed998a08d81de62ce5a6310d6", size = 1062021 },
-]
-
-[[package]]
-name = "setuptools-scm"
-version = "9.2.2"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.10'",
-]
-dependencies = [
-    { name = "packaging", marker = "python_full_version < '3.10'" },
-    { name = "setuptools", marker = "python_full_version < '3.10'" },
-    { name = "tomli", marker = "python_full_version < '3.10'" },
-    { name = "typing-extensions", marker = "python_full_version < '3.10'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/b1/19587742aad604f1988a8a362e660e8c3ac03adccdb71c96d86526e5eb62/setuptools_scm-9.2.2.tar.gz", hash = "sha256:1c674ab4665686a0887d7e24c03ab25f24201c213e82ea689d2f3e169ef7ef57", size = 203385 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/ea/ac2bf868899d0d2e82ef72d350d97a846110c709bacf2d968431576ca915/setuptools_scm-9.2.2-py3-none-any.whl", hash = "sha256:30e8f84d2ab1ba7cb0e653429b179395d0c33775d54807fc5f1dd6671801aef7", size = 62975 },
-]
-
-[[package]]
-name = "setuptools-scm"
-version = "10.0.5"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform == 'win32'",
-    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.10.*'",
-]
-dependencies = [
-    { name = "packaging", marker = "python_full_version >= '3.10'" },
-    { name = "setuptools", marker = "python_full_version >= '3.10'" },
-    { name = "tomli", marker = "python_full_version == '3.10.*'" },
-    { name = "typing-extensions", marker = "python_full_version == '3.10.*'" },
-    { name = "vcs-versioning", marker = "python_full_version >= '3.10'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a5/b1/2a6a8ecd6f9e263754036a0b573360bdbd6873b595725e49e11139722041/setuptools_scm-10.0.5.tar.gz", hash = "sha256:bbba8fe754516cdefd017f4456721775e6ef9662bd7887fb52ae26813d4838c3", size = 56748 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5c/e1/342c4434df56aa537f6ce7647eefee521d96fbb828b08acd709865767652/setuptools_scm-10.0.5-py3-none-any.whl", hash = "sha256:f611037d8aae618221503b8fa89319f073438252ae3420e01c9ceec249131a0a", size = 21695 },
 ]
 
 [[package]]
@@ -4078,20 +4013,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c7/24/5f1b3bdffd70275f6661c76461e25f024d5a38a46f04aaca912426a2b1d3/urllib3-2.6.3.tar.gz", hash = "sha256:1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed", size = 435556 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl", hash = "sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4", size = 131584 },
-]
-
-[[package]]
-name = "vcs-versioning"
-version = "1.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "packaging", marker = "python_full_version >= '3.10'" },
-    { name = "tomli", marker = "python_full_version == '3.10.*'" },
-    { name = "typing-extensions", marker = "python_full_version == '3.10.*'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/49/42/d97a7795055677961c63a1eef8e7b19d5968ed992ed3a70ab8eb012efad8/vcs_versioning-1.1.1.tar.gz", hash = "sha256:fabd75a3cab7dd8ac02fe24a3a9ba936bf258667b5a62ed468c9a1da0f5775bc", size = 97575 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e6/60/73603fbcdbe5e803855bcce4414f94eaeed449083bd8183e67161af78188/vcs_versioning-1.1.1-py3-none-any.whl", hash = "sha256:b541e2ba79fc6aaa3850f8a7f88af43d97c1c80649c01142ee4146eddbc599e4", size = 79851 },
 ]
 
 [[package]]

@@ -143,7 +143,7 @@ class ConfigArguments:
     checkpoint_mechanism_classname = None
     data_loader_sampler: DataLoaderSampler = None
     reader_classname: str = None
-    multiprocessing_context: str = "fork"
+    multiprocessing_context: str = "spawn"
     pin_memory: bool = True
     odirect: bool = False
 
@@ -230,9 +230,6 @@ class ConfigArguments:
 
     def configure_dlio_logging(self, is_child=False):
         global DLIOLogger
-        # with "multiprocessing_context=fork" the log file remains open in the child process
-        if is_child and self.multiprocessing_context == "fork":
-            return
         # Configure the logging library
         log_format_verbose = '[%(levelname)s] %(message)s [%(pathname)s:%(lineno)d]'
         log_format_simple = '[%(levelname)s] %(message)s'
@@ -265,25 +262,10 @@ class ConfigArguments:
         )
 
     def configure_dftracer(self, is_child=False, use_pid=False):
-        # with "multiprocessing_context=fork" the profiler file remains open in the child process
-        if is_child and self.multiprocessing_context == "fork":
-            return
-        # Configure the profiler
-        if DFTRACER_ENABLE:
-            dlp_trace = get_trace_name(self.output_folder, use_pid)
-            if DLIOMPI.get_instance().rank() == 0:
-                self.logger.output(f"{utcnow()} Profiling DLIO {dlp_trace}")
-            return PerfTrace.initialize_log(logfile=dlp_trace,
-                                                   data_dir=f"{os.path.abspath(self.data_folder)}:"
-                                                            f"{self.data_folder}:./{self.data_folder}:"
-                                                            f"{self.checkpoint_folder}:./{self.checkpoint_folder}:"
-                                                            f"{os.path.abspath(self.checkpoint_folder)}",
-                                                   process_id=self.my_rank)
         return None
 
     def finalize_dftracer(self, dlp_logger):
-        if DFTRACER_ENABLE and dlp_logger:
-            dlp_logger.finalize()
+        pass
 
     @dlp.log
     def validate(self):

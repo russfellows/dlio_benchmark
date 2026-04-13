@@ -37,12 +37,54 @@ except ImportError:
     dgen_py = None
 
 from dlio_benchmark.common.enumerations import MPIState
-from dftracer.python import (
-    dftracer as PerfTrace,
-    dft_fn as Profile,
-    ai as dft_ai,
-    DFTRACER_ENABLE
-)
+# dftracer is disabled. No-op stubs let the rest of the codebase use
+# Profile / PerfTrace / dft_ai without the library being present or imported.
+DFTRACER_ENABLE = False
+
+class _NoOpFn:
+    """No-op stub for dft_fn (Profile context manager / decorator)."""
+    def __init__(self, *args, **kwargs): pass
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def __getattr__(self, name): return _NoOpFn()
+    def __call__(self, fn=None, *args, **kwargs):
+        if callable(fn):
+            return fn
+        if fn is not None:
+            return fn   # pass iterables through (e.g. dft_ai.x.iter(iterable))
+        return self
+    def log(self, fn=None, *args, **kwargs):
+        if callable(fn): return fn
+        return lambda f: f
+    def log_init(self, fn=None, *args, **kwargs):
+        if callable(fn): return fn
+        return lambda f: f
+    def update(self, *args, **kwargs): pass
+
+class _NoOpTracer:
+    """No-op stub for dftracer singleton."""
+    @staticmethod
+    def get_instance(): return _NoOpTracer()
+    def initialize(self, *a, **kw): pass
+    def finalize(self, *a, **kw): pass
+    def get_time(self): return 0
+    def enter_event(self): pass
+    def exit_event(self): pass
+    def log_event(self, *a, **kw): pass
+    def log_metadata_event(self, *a, **kw): pass
+
+class _NoOpAI:
+    """No-op stub for dft_ai — supports @dft_ai, @dft_ai.x.y, dft_ai.x.iter(it)."""
+    def __call__(self, fn=None, *args, **kwargs):
+        if callable(fn): return fn
+        if fn is not None: return fn
+        return self
+    def __getattr__(self, name): return _NoOpFn()
+    def update(self, *args, **kwargs): pass
+
+Profile = _NoOpFn
+PerfTrace = _NoOpTracer
+dft_ai = _NoOpAI()
 
 LOG_TS_FORMAT = "%Y-%m-%dT%H:%M:%S.%f"
 
