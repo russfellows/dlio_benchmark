@@ -22,6 +22,11 @@ DLIO_TEST_OUTPUT_DIR = os.environ.get('DLIO_TEST_OUTPUT_DIR', _DEFAULT_TEST_OUTP
 # don't go through a test-local run_benchmark() wrapper.
 os.environ.setdefault('DLIO_OUTPUT_FOLDER', DLIO_TEST_OUTPUT_DIR)
 
+# Cap auto-sized thread counts during tests so the suite runs predictably on
+# small CI runners (GitHub Actions: 2 cores) and doesn't saturate large dev
+# machines.  Set DLIO_MAX_AUTO_THREADS in the environment to override.
+os.environ.setdefault('DLIO_MAX_AUTO_THREADS', '2')
+
 
 # HACK: to fix the reinitialization problem
 def pytest_configure(config):

@@ -644,7 +644,11 @@ class ConfigArguments:
         # PR-13: Use ranks_per_node() instead of comm_size so that multi-node
         # runs correctly size threads relative to the number of ranks on *this*
         # node rather than across the entire job.
-        _MAX_AUTO_READ_THREADS = 8
+        # DLIO_MAX_AUTO_THREADS caps both read and write auto-sizing.
+        # Useful in CI (set to 2) and tests (set in conftest.py) to prevent
+        # accidental saturation of small runner environments.
+        _env_cap = int(os.environ.get('DLIO_MAX_AUTO_THREADS', '8'))
+        _MAX_AUTO_READ_THREADS = max(1, _env_cap)
         if self.read_threads == 1:
             _cpu_count = os.cpu_count() or 1
             _ranks_per_node = DLIOMPI.get_instance().ranks_per_node()
@@ -660,7 +664,7 @@ class ConfigArguments:
 
         # PR-14: Auto-size write_threads when the user has not set an explicit
         # value (the dataclass default is 1).  Same formula as read_threads.
-        _MAX_AUTO_WRITE_THREADS = 8
+        _MAX_AUTO_WRITE_THREADS = max(1, _env_cap)
         if self.write_threads == 1:
             _cpu_count = os.cpu_count() or 1
             _ranks_per_node = DLIOMPI.get_instance().ranks_per_node()
