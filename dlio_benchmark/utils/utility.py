@@ -243,6 +243,24 @@ class DLIOMPI:
             raise Exception(f"method {self.classname()}.size() called before initializing MPI")
         else:
             return self.mpi_ppn_list[self.mpi_node]
+
+    def ranks_per_node(self) -> int:
+        """Number of MPI ranks sharing this physical node.
+
+        Equivalent to npernode() in MPI_INITIALIZED state, but safe to call
+        in CHILD_INITIALIZED state (where full topology is unavailable) —
+        falls back to total comm_size as a conservative estimate.
+        """
+        if self.mpi_state == MPIState.UNINITIALIZED:
+            raise Exception(f"method {self.classname()}.ranks_per_node() called before initializing MPI")
+        elif self.mpi_state == MPIState.CHILD_INITIALIZED:
+            # Child processes don't run through initialize(), so mpi_ppn_list
+            # is not set.  Return comm_size as a conservative fallback so that
+            # auto-sizing formulas (cpu_count // ranks_per_node) don't over-allocate.
+            return self.mpi_size
+        else:
+            return self.mpi_ppn_list[self.mpi_node]
+
     def nnodes(self):
         if self.mpi_state == MPIState.UNINITIALIZED:
             raise Exception(f"method {self.classname()}.size() called before initializing MPI")

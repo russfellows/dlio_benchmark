@@ -16,13 +16,32 @@
 """
 import os
 import math
-from time import time
+import time
 import numpy as np
 
 # Reduce TF and CUDA logging
 
 import hydra
 from omegaconf import DictConfig
+from dlio_benchmark.common.enumerations import StorageType as _StorageType
+
+
+def _apply_settle_guard(args, comm) -> None:
+    """Sleep after data generation for eventual-consistency object stores.
+
+    Only activates when *both* conditions are true:
+      - ``args.storage_type`` is not ``LOCAL_FS`` (i.e. an object store)
+      - ``args.post_generation_settle_seconds > 0``
+
+    Rank-0 sleeps for the configured duration; then all ranks barrier so
+    they proceed together.  Default is 0.0 — zero behaviour change for
+    existing configs.
+    """
+    if (args.post_generation_settle_seconds > 0
+            and args.storage_type != _StorageType.LOCAL_FS):
+        if args.my_rank == 0:
+            time.sleep(args.post_generation_settle_seconds)
+        comm.barrier()
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['AUTOGRAPH_VERBOSITY'] = '0'
@@ -59,7 +78,7 @@ class DLIOBenchmark(object):
             <li> local variables </li>
         </ul>
         """
-        t0 = time()
+        t0 = time.time()
         self.args = ConfigArguments.get_instance()
         LoadConfig(self.args, cfg)
 
@@ -172,6 +191,7 @@ class DLIOBenchmark(object):
             self.comm.barrier()
             if self.args.my_rank == 0:
                 self.logger.output(f"{utcnow()} Generation done")
+            _apply_settle_guard(self.args, self.comm)
 
         if not self.generate_only and self.do_profiling:
             self.profiler.start()
