@@ -56,6 +56,7 @@ class ConfigArguments:
     storage_root: str = "./"
     storage_type: StorageType = StorageType.LOCAL_FS
     storage_options: Optional[Dict[str, str]] = None
+    post_generation_settle_seconds: float = 0.0
     record_length: int = 64 * 1024
     record_length_stdev: int = 0
     record_length_resize: int = 0
@@ -87,6 +88,7 @@ class ConfigArguments:
     transfer_size: int = None
     read_threads: int = 1
     dont_use_mmap: bool = False
+    write_threads: int = 1
     computation_threads: int = 1
     computation_time: ClassVar[Dict[str, Any]] = {}
     preprocess_time: ClassVar[Dict[str, Any]] = {}
@@ -639,18 +641,38 @@ class ConfigArguments:
         # PR-5: Auto-size read_threads when the user has not set an explicit
         # value (the dataclass default is 1).  Values > 1 in the YAML are
         # treated as intentional and respected as-is.
+        # PR-13: Use ranks_per_node() instead of comm_size so that multi-node
+        # runs correctly size threads relative to the number of ranks on *this*
+        # node rather than across the entire job.
         _MAX_AUTO_READ_THREADS = 8
         if self.read_threads == 1:
             _cpu_count = os.cpu_count() or 1
-            _per_rank_cpu = max(1, _cpu_count // max(1, self.comm_size))
+            _ranks_per_node = DLIOMPI.get_instance().ranks_per_node()
+            _per_rank_cpu = max(1, _cpu_count // max(1, _ranks_per_node))
             _auto_threads = min(_per_rank_cpu, _MAX_AUTO_READ_THREADS)
             if _auto_threads > 1:
                 self.logger.info(
                     f"Auto-sizing read_threads to {_auto_threads} "
-                    f"(cpu_count={_cpu_count}, comm_size={self.comm_size}). "
+                    f"(cpu_count={_cpu_count}, ranks_per_node={_ranks_per_node}). "
                     "Set read_threads explicitly in your YAML to override."
                 )
                 self.read_threads = _auto_threads
+
+        # PR-14: Auto-size write_threads when the user has not set an explicit
+        # value (the dataclass default is 1).  Same formula as read_threads.
+        _MAX_AUTO_WRITE_THREADS = 8
+        if self.write_threads == 1:
+            _cpu_count = os.cpu_count() or 1
+            _ranks_per_node = DLIOMPI.get_instance().ranks_per_node()
+            _per_rank_cpu = max(1, _cpu_count // max(1, _ranks_per_node))
+            _auto_w_threads = min(_per_rank_cpu, _MAX_AUTO_WRITE_THREADS)
+            if _auto_w_threads > 1:
+                self.logger.info(
+                    f"Auto-sizing write_threads to {_auto_w_threads} "
+                    f"(cpu_count={_cpu_count}, ranks_per_node={_ranks_per_node}). "
+                    "Set write_threads explicitly in your YAML to override."
+                )
+                self.write_threads = _auto_w_threads
 
         # dimension-based derivations
 
@@ -1061,10 +1083,27 @@ def _apply_env_overrides(args: 'ConfigArguments', dotenv: dict) -> None:
       DLIO_DATA_GEN        — data-generation backend: 'dgen', 'numpy', or
                              'auto' (default).  Also honoured in
                              derive_configurations() for backward compat.
+
+    Storage env vars (Issue 9 — standalone object-storage usability):
+
+      DLIO_STORAGE_LIBRARY — storage_options['storage_library']:
+                             'minio', 's3dlio', 's3torchconnector', etc.
+      DLIO_BUCKET          — storage_root: S3 bucket / container name.
+      DLIO_STORAGE_TYPE    — storage_type: 's3', 'local_fs', 'aistore', etc.
+      AWS_ACCESS_KEY_ID    — storage_options['access_key_id']
+      AWS_SECRET_ACCESS_KEY— storage_options['secret_access_key']
+      AWS_ENDPOINT_URL     — storage_options['endpoint_url']
+      AWS_REGION           — storage_options['region']
+
+    All storage env vars are optional and only fill in fields that are not
+    already set by YAML / CLI.  Standard AWS_* names are reused so that a
+    single .env file works both with dlio_benchmark and with the AWS CLI.
     """
     def _getenv(key: str):
         """Return key from os.environ (higher priority) or .env file."""
         return os.environ.get(key) or dotenv.get(key)
+
+    # ── output / data-gen ──────────────────────────────────────────────────
 
     # output_folder: fill in only if not already set by YAML/CLI
     if args.output_folder is None:
@@ -1077,6 +1116,45 @@ def _apply_env_overrides(args: 'ConfigArguments', dotenv: dict) -> None:
         v = _getenv('DLIO_DATA_GEN')
         if v:
             args.data_gen_method = v.lower()
+
+    # ── storage env vars (Issue 9) ─────────────────────────────────────────
+    # Each variable is only applied when the corresponding field is still at
+    # its "unset" sentinel value (None / default), so explicit YAML/CLI
+    # values always win.
+
+    # storage_type
+    if args.storage_type is None:
+        v = _getenv('DLIO_STORAGE_TYPE')
+        if v:
+            from dlio_benchmark.common.enumerations import StorageType
+            try:
+                args.storage_type = StorageType(v.lower())
+            except ValueError:
+                pass
+
+    # storage_root (bucket)
+    if args.storage_root is None:
+        v = _getenv('DLIO_BUCKET')
+        if v:
+            args.storage_root = v
+
+    # storage_options dict — lazily allocated on first use
+    _so_updates = {
+        'DLIO_STORAGE_LIBRARY': 'storage_library',
+        'AWS_ACCESS_KEY_ID':    'access_key_id',
+        'AWS_SECRET_ACCESS_KEY':'secret_access_key',
+        'AWS_ENDPOINT_URL':     'endpoint_url',
+        'AWS_REGION':           'region',
+    }
+    for env_key, opt_key in _so_updates.items():
+        v = _getenv(env_key)
+        if v:
+            if args.storage_options is None:
+                # First storage env var seen — create the dict
+                args.storage_options = {}
+            # Only fill if the key is not already set by YAML/CLI
+            if opt_key not in args.storage_options:
+                args.storage_options[opt_key] = v
 
 
 def LoadConfig(args, config):
@@ -1105,6 +1183,8 @@ def LoadConfig(args, config):
             if args.storage_options is None:
                 args.storage_options = {}
             args.storage_options['storage_library'] = config['storage']['storage_library']
+        if 'post_generation_settle_seconds' in config['storage']:
+            args.post_generation_settle_seconds = float(config['storage']['post_generation_settle_seconds'])
 
     # dataset related settings
     if 'dataset' in config:
@@ -1195,6 +1275,8 @@ def LoadConfig(args, config):
             args.data_loader_sampler = DataLoaderSampler(reader['data_loader_sampler'])
         if 'read_threads' in reader:
             args.read_threads = reader['read_threads']
+        if 'write_threads' in reader:
+            args.write_threads = reader['write_threads']
         if 'computation_threads' in reader:
             args.computation_threads = reader['computation_threads']
         if 'batch_size' in reader:
