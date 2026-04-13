@@ -7,7 +7,7 @@ name = "dlio_benchmark"
 version = "3.0.0"
 description = "An I/O benchmark for deep learning applications"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "dgen-py>=0.2.2; python_version >= '3.11'",
     "h5py>=3.11.0",

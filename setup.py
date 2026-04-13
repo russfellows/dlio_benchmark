@@ -14,7 +14,7 @@ test_deps = [
 core_deps = [
     "Pillow>=9.3.0",
     "PyYAML>=6.0.0",
-    "dgen-py>=0.2.2; python_version >= '3.11'",
+    "dgen-py>=0.2.2",
     "h5py>=3.11.0",
     "mpi4py>=3.1.4",
     "numpy>=1.23.5",
@@ -84,11 +84,6 @@ setup(
         # Specify the Python versions you support here. In particular, ensure
         # that you indicate you support Python 3. These classifiers are *not*
         # checked by 'pip install'. See instead 'python_requires' below.
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3 :: Only",
     ],
@@ -113,6 +108,7 @@ setup(
         "https://developer.download.nvidia.com/compute/redist",
     ],
     install_requires=deps,
+    python_requires=">=3.12,<3.13",
     tests_require=test_deps,
     extras_require=extras,
     entry_points={
