@@ -71,7 +71,17 @@ def init():
 
 
 def finalize():
-    pass
+    from dlio_benchmark.checkpointing.pytorch_checkpointing import PyTorchCheckpointing
+    from dlio_benchmark.checkpointing.tf_checkpointing import TFCheckpointing
+    from dlio_benchmark.checkpointing.pytorch_obj_store_checkpointing import PyTorchObjStoreCheckpointing
+    from dlio_benchmark.framework.torch_framework import TorchFramework
+    from dlio_benchmark.framework.tf_framework import TFFramework
+    PyTorchCheckpointing._PyTorchCheckpointing__instance = None
+    TFCheckpointing._TFCheckpointing__instance = None
+    PyTorchObjStoreCheckpointing._PyTorchObjStoreCheckpointing__instance = None
+    TorchFramework._TorchFramework__instance = None
+    TFFramework._TFFramework__instance = None
+    DLIOMPI.reset()
 
 
 def clean(storage_root="./"):
@@ -547,8 +557,6 @@ def test_npy_reader_compatibility():
 
         if comm.rank == 0:
             train, _ = _find_files(cfg, None, "npy")
-            ConfigArguments.reset()
-            OmegaConf.to_container(cfg["workload"], resolve=True)
             workload_dict = OmegaConf.to_container(cfg["workload"], resolve=True)
             workload_dict.setdefault("output", {})["folder"] = DLIO_TEST_OUTPUT_DIR
             ConfigArguments.reset()

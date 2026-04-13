@@ -43,11 +43,6 @@ from dlio_benchmark.data_generator.generator_factory import GeneratorFactory
 from dlio_benchmark.storage.storage_factory import StorageFactory
 
 dlp = Profile(MODULE_DLIO_BENCHMARK)
-# To make sure the output folder is the same in all the nodes. We have to do this.
-
-dftracer_initialize = True
-dftracer_finalize   = True
-dtracer             = None
 
 class DLIOBenchmark(object):
     """
@@ -64,8 +59,6 @@ class DLIOBenchmark(object):
             <li> local variables </li>
         </ul>
         """
-        global dftracer, dftracer_initialize, dftracer_finalize
-
         t0 = time()
         self.args = ConfigArguments.get_instance()
         LoadConfig(self.args, cfg)
@@ -110,8 +103,6 @@ class DLIOBenchmark(object):
             self.logger.output(f"  epochs         = {self.args.epochs!r}")
             self.logger.output(f"  batch_size     = {self.args.batch_size!r}")
         
-        if dftracer_initialize:
-            dftracer = self.args.configure_dftracer(is_child=False, use_pid=False)
         with Profile(name=f"{self.__init__.__qualname__}", cat=MODULE_DLIO_BENCHMARK):
             mode = []
             if self.args.generate_data:
@@ -451,8 +442,6 @@ class DLIOBenchmark(object):
         It finalizes the dataset once training is completed.
         """
 
-        global dftracer, dftracer_initialize, dftracer_finalize
-
         self.comm.barrier()
         if self.checkpointing_mechanism:
             self.checkpointing_mechanism.finalize()
@@ -475,8 +464,6 @@ class DLIOBenchmark(object):
             self.stats.finalize()
             self.stats.save_data()
         self.comm.barrier()
-        if dftracer_finalize and dftracer:
-            self.args.finalize_dftracer(dftracer)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
@@ -487,12 +474,10 @@ def run_benchmark(cfg: DictConfig):
     benchmark.finalize()
 
 def set_dftracer_initialize(status):
-    global dftracer, dftracer_initialize, dftracer_finalize
-    dftracer_initialize = status
+    pass  # dftracer is disabled
 
 def set_dftracer_finalize(status):
-    global dftracer, dftracer_initialize, dftracer_finalize
-    dftracer_finalize = status
+    pass  # dftracer is disabled
 
 def main() -> None:
     """
