@@ -31,6 +31,7 @@ test = [
     "pytest",
     "pytest-timeout",
     "pytest-xdist",
+    "dftracer>=2.0.1",
 ]
 dftracer = [
     "pydftracer>=2.0.2",
