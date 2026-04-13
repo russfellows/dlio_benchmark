@@ -166,7 +166,8 @@ def test_ai_logging_train(setup_test_env, framework, num_data, batch_size):
         "++workload.dataset.num_subfolders_train=0",
         "++workload.dataset.num_subfolders_eval=0",
         f"++workload.train.epochs={num_epochs}",
-        f"++workload.reader.batch_size={batch_size}"
+        f"++workload.reader.batch_size={batch_size}",
+        "++workload.reader.read_threads=1",
     ]
 
     # Run benchmark in MPI subprocess
