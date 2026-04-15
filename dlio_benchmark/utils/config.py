@@ -264,10 +264,25 @@ class ConfigArguments:
         )
 
     def configure_dftracer(self, is_child=False, use_pid=False):
+        # with "multiprocessing_context=fork" the profiler file remains open in the child process
+        if is_child and self.multiprocessing_context == "fork":
+            return
+        # Configure the profiler
+        if DFTRACER_ENABLE:
+            dlp_trace = get_trace_name(self.output_folder, use_pid)
+            if DLIOMPI.get_instance().rank() == 0:
+                self.logger.output(f"{utcnow()} Profiling DLIO {dlp_trace}")
+            return PerfTrace.initialize_log(logfile=dlp_trace,
+                                                   data_dir=f"{os.path.abspath(self.data_folder)}:"
+                                                            f"{self.data_folder}:./{self.data_folder}:"
+                                                            f"{self.checkpoint_folder}:./{self.checkpoint_folder}:"
+                                                            f"{os.path.abspath(self.checkpoint_folder)}",
+                                                   process_id=self.my_rank)
         return None
 
     def finalize_dftracer(self, dlp_logger):
-        pass
+        if DFTRACER_ENABLE and dlp_logger:
+            dlp_logger.finalize()
 
     @dlp.log
     def validate(self):

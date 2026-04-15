@@ -7,9 +7,9 @@ name = "dlio_benchmark"
 version = "3.0.0"
 description = "An I/O benchmark for deep learning applications"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "dgen-py>=0.2.2; python_version >= '3.11'",
+    "dgen-py>=0.2.2",
     "h5py>=3.11.0",
     "mpi4py>=3.1.4",
     "numpy>=1.23.5",
@@ -23,6 +23,7 @@ dependencies = [
     "torch>=2.8.0",
     "tensorflow>=2.20.0",
     "pyarrow>=21.0.0",
+    "pydftracer>=2.0.2",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,7 @@ test = [
     "pytest",
     "pytest-timeout",
     "pytest-xdist",
+    "dftracer>=2.0.1",
 ]
 dftracer = [
     "pydftracer>=2.0.2",
