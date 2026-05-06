@@ -56,9 +56,11 @@ Example YAML snippet:
 """
 import bisect
 import os
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
 from dlio_benchmark.common.constants import MODULE_DATA_READER
+from dlio_benchmark.common.enumerations import ReadType as _ReadType
 from dlio_benchmark.reader.reader_handler import FormatReader
 from dlio_benchmark.utils.utility import Profile, utcnow
 
@@ -271,6 +273,19 @@ class ParquetReaderS3Iterable(FormatReader):
         # Flushed at finalize() (epoch boundary).
         self._rg_cache: dict = {}
 
+        # Prefetch thread pool (s3dlio only): when a file is opened, all of its
+        # row-group extents are submitted as background tasks immediately.  By
+        # the time get_sample() requests a given row group, the data has usually
+        # already been fetched — the main thread never blocks on HTTP.
+        # 32 threads saturates the loopback TCP stack without overwhelming it.
+        self._prefetch_futures: dict = {}  # (filename, rg_idx) -> Future[int]
+        self._prefetch_executor: ThreadPoolExecutor | None = None
+        if self._storage_library == "s3dlio":
+            max_w = int(opts.get("prefetch_workers", 32))
+            self._prefetch_executor = ThreadPoolExecutor(
+                max_workers=max_w, thread_name_prefix="rg-prefetch"
+            )
+
         # s3dlio reads AWS_ENDPOINT_URL_S3 at runtime; set it early if needed.
         if self._storage_library == "s3dlio":
             ep = opts.get("endpoint_url")
@@ -387,6 +402,20 @@ class ParquetReaderS3Iterable(FormatReader):
                 "supported: s3dlio, s3torchconnector, minio"
             )
 
+    def _fetch_rg_s3dlio(self, uri: str, rg_start: int, rg_length: int, compressed_bytes: int) -> int:
+        """Fetch one row-group byte extent from S3 in a background thread.
+
+        s3dlio.get_range() releases the GIL for the duration of network I/O,
+        so multiple threads execute true parallel transfers.  The downloaded
+        bytes are discarded immediately — we are a storage benchmark.
+        Returns compressed_bytes (passed through) so the Future carries the
+        value get_sample() needs for _rg_cache without extra coordination.
+        """
+        if rg_length > 0:
+            import s3dlio
+            s3dlio.get_range(uri, rg_start, rg_length)
+        return compressed_bytes
+
     # ── FormatReader interface ────────────────────────────────────────────────
 
     @dlp.log
@@ -417,7 +446,50 @@ class ParquetReaderS3Iterable(FormatReader):
             f"{utcnow()} ParquetReaderS3Iterable.open {filename} "
             f"row_groups={meta.num_row_groups} total_rows={offsets[-1]}"
         )
-        self._pf_cache[filename] = (pf, offsets)
+        # Eagerly prefetch all row-group extents in background threads (s3dlio only).
+        # Each future calls s3dlio.get_range() which releases the GIL, so up to
+        # prefetch_workers (default 32) transfers run in true parallel.  By the
+        # time get_sample() is called for any (filename, rg_idx) the data is
+        # almost certainly already fetched — the main loop never blocks on HTTP.
+        if self._prefetch_executor is not None:
+            uri = self._uri_for_obj_key(filename)
+            schema = pf.schema_arrow
+            n_cols = meta.row_group(0).num_columns if meta.num_row_groups > 0 else 0
+            if self._columns is not None:
+                col_names = set(self._columns)
+                col_indices = [
+                    i for i in range(n_cols)
+                    if schema.field(i).name in col_names
+                ]
+            else:
+                col_indices = list(range(n_cols))
+            for rg_i in range(meta.num_row_groups):
+                rg_meta = meta.row_group(rg_i)
+                all_comp = sum(
+                    rg_meta.column(c).total_compressed_size
+                    for c in range(rg_meta.num_columns)
+                )
+                rg_start_b = rg_end_b = None
+                for ci in col_indices:
+                    cm = rg_meta.column(ci)
+                    s = (
+                        cm.dictionary_page_offset
+                        if cm.dictionary_page_offset > 0
+                        else cm.data_page_offset
+                    )
+                    e = s + cm.total_compressed_size
+                    if rg_start_b is None or s < rg_start_b:
+                        rg_start_b = s
+                    if rg_end_b is None or e > rg_end_b:
+                        rg_end_b = e
+                rg_len = (rg_end_b - rg_start_b) if rg_start_b is not None else 0
+                self._prefetch_futures[(filename, rg_i)] = self._prefetch_executor.submit(
+                    self._fetch_rg_s3dlio, uri, rg_start_b or 0, rg_len, all_comp
+                )
+        # Store rf alongside pf so get_sample can do raw byte reads without
+        # going through pq.ParquetFile.read_row_group() (which would attempt
+        # Thrift page-header deserialization on potentially synthetic bytes).
+        self._pf_cache[filename] = (pf, rf, offsets)
         return self._pf_cache[filename]
 
     @dlp.log
@@ -442,7 +514,7 @@ class ParquetReaderS3Iterable(FormatReader):
         is extracted. No row data is held between calls. The DLIO pipeline consumes
         self._args.resized_image (a pre-allocated random tensor) not actual file data.
         """
-        pf, offsets = self.open_file_map[filename]
+        pf, rf, offsets = self.open_file_map[filename]
 
         # Binary search: find rg_idx such that offsets[rg_idx] <= sample_index
         # < offsets[rg_idx + 1].  bisect_right on offsets gives insertion point
@@ -452,14 +524,44 @@ class ParquetReaderS3Iterable(FormatReader):
 
         cache_key = (filename, rg_idx)
         if cache_key not in self._rg_cache:
-            # Fetch this row group — triggers the range GETs we are benchmarking.
-            table = pf.read_row_group(rg_idx, columns=self._columns)
-            rg_meta = pf.metadata.row_group(rg_idx)
-            compressed_bytes = sum(
-                rg_meta.column(c).total_compressed_size
-                for c in range(rg_meta.num_columns)
-            )
-            del table  # discard immediately — we are NOT a training framework
+            if cache_key in self._prefetch_futures:
+                # Background prefetch is in flight or already done — just wait.
+                # For the first access the data is usually already fetched;
+                # for the rare case it isn't, we block until it completes.
+                compressed_bytes = self._prefetch_futures.pop(cache_key).result()
+            else:
+                # Synchronous fallback: non-s3dlio libraries, or the (unlikely)
+                # case where prefetch was not submitted for this row group.
+                rg_meta = pf.metadata.row_group(rg_idx)
+                compressed_bytes = sum(
+                    rg_meta.column(c).total_compressed_size
+                    for c in range(rg_meta.num_columns)
+                )
+                schema = pf.schema_arrow
+                if self._columns is not None:
+                    col_names = set(self._columns)
+                    col_indices = [
+                        i for i in range(rg_meta.num_columns)
+                        if schema.field(i).name in col_names
+                    ]
+                else:
+                    col_indices = range(rg_meta.num_columns)
+                rg_start = rg_end = None
+                for ci in col_indices:
+                    cm = rg_meta.column(ci)
+                    chunk_start = (
+                        cm.dictionary_page_offset
+                        if cm.dictionary_page_offset > 0
+                        else cm.data_page_offset
+                    )
+                    chunk_end = chunk_start + cm.total_compressed_size
+                    if rg_start is None or chunk_start < rg_start:
+                        rg_start = chunk_start
+                    if rg_end is None or chunk_end > rg_end:
+                        rg_end = chunk_end
+                if rg_start is not None and rg_end > rg_start:
+                    rf.seek(rg_start)
+                    rf.read(rg_end - rg_start)
             self._rg_cache[cache_key] = compressed_bytes  # int only; negligible RAM
 
         dlp.update(image_size=self._rg_cache[cache_key])
@@ -468,14 +570,33 @@ class ParquetReaderS3Iterable(FormatReader):
         for batch in super().next():
             yield batch
 
-    @dlp.log
     def read_index(self, image_idx, step):
-        dlp.update(step=step)
-        return super().read_index(image_idx, step)
+        """Fast read_index that skips the base-class per-sample utcnow() overhead.
+
+        FormatReader.read_index() calls datetime.now().strftime() twice per
+        sample for debug logging.  With 16 million samples per worker that adds
+        ~48 seconds of pure Python overhead unrelated to I/O.  We replicate
+        the essential logic — open (cached footer) → get_sample → on-demand
+        close — without the logging cost.
+        """
+        filename, sample_index = self.global_index_map[image_idx]
+        if (
+            filename not in self.open_file_map
+            or self.open_file_map[filename] is None
+        ):
+            self.open_file_map[filename] = self.open(filename)
+        self.get_sample(filename, sample_index)
+        if self._args.read_type is _ReadType.ON_DEMAND:
+            self.open_file_map[filename] = None
+        return self._args.resized_image
 
     @dlp.log
     def finalize(self):
-        """Flush both caches at epoch boundary."""
+        """Flush all caches and cancel outstanding prefetch futures at epoch boundary."""
+        # Cancel any futures that haven't been consumed yet (e.g. early epoch end).
+        for fut in self._prefetch_futures.values():
+            fut.cancel()
+        self._prefetch_futures.clear()
         self._pf_cache.clear()
         self._rg_cache.clear()
         return super().finalize()
