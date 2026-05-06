@@ -154,12 +154,19 @@ class ReaderFactory(object):
         elif type == FormatType.PARQUET:
             if _args.odirect == True:
                 raise Exception("O_DIRECT for %s format is not yet supported." %type)
+            # s3dlio-backed reader: handles both S3 and local paths through a
+            # unified Rust implementation.  Opt-in via storage_library: s3dlio.
+            elif getattr(_args, "storage_options", {}) and \
+                    _args.storage_options.get("storage_library") == "s3dlio":
+                from dlio_benchmark.reader.parquet_reader_s3dlio import ParquetReaderS3dlio
+                return ParquetReaderS3dlio(dataset_type, thread_index, epoch_number)
             elif _args.storage_type in (StorageType.S3, StorageType.AISTORE):
                 from dlio_benchmark.reader.parquet_reader_s3_iterable import ParquetReaderS3Iterable
                 return ParquetReaderS3Iterable(dataset_type, thread_index, epoch_number)
             else:
                 from dlio_benchmark.reader.parquet_reader import ParquetReader
                 return ParquetReader(dataset_type, thread_index, epoch_number)
+
 
         else:
             raise Exception("Loading data of %s format is not supported without framework data loader" %type)
