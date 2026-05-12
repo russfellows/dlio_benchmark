@@ -225,3 +225,27 @@ This is the only path to full 10 GiB/s with the existing per-file/per-row-group 
 - s3-ultra — in-memory `parquet_footer_cache` (DashMap), early-out for non-footer GETs, release binary: s3 server CPU < 1 core at full DLRM load
 - Hard ceiling without Level 3: **~1,600 MiB/s** (Python inner loop dominates)
 - Hard ceiling with Level 3: **~10,060 MiB/s** (I/O bound)
+
+---
+
+## 9. Three-Mode Read Benchmark (May 2026, local NVMe, s3dlio v0.9.100)
+
+**Test configuration:** 4 files × 8 row groups × 200 float32 cols = 32 RGs total, 35.6 MB on disk (Snappy compressed)
+**Storage:** local NVMe via `file://` URIs (best-case; S3 latency would widen the gaps further)
+
+| Mode | Reader | Workers | Time | Decoded MB | Throughput |
+|------|--------|---------|------|------------|------------|
+| 1 — s3dlio raw + DISCARD | `parquet_get_rg(decode="raw")` → `len(bytes(bv))` | serial | 0.085s | 34.9 MB (compressed) | **412 MB/s** |
+| 2 — PyArrow native (baseline) | `pq.ParquetFile.read_row_group()` | serial | 0.170s | 27.0 MB | 159 MB/s |
+| 3 — s3dlio arrow + IPC decode | `parquet_get_rg(decode="arrow")` + `pa.ipc.open_stream()` | 4 | 0.219s | 26.2 MB | 120 MB/s |
+| 3 — s3dlio arrow + IPC decode | same | 8 | 0.159s | 26.2 MB | **164 MB/s** |
+| 3 — s3dlio arrow + IPC decode | same | 16 | 0.174s | 26.2 MB | 151 MB/s |
+| 3 — s3dlio arrow + IPC decode | same | 32 | 0.168s | 26.2 MB | 156 MB/s |
+
+**Key observations:**
+
+- **Mode 1 (raw + discard)** is 2.6× faster than PyArrow native — pure I/O with zero decode overhead. This is the storage benchmark mode used in production throughput tests.
+- **Mode 2 (PyArrow native)** is the baseline any default PyTorch DataLoader achieves. Serial, blocking, one HTTP GET per `read_row_group()` call.
+- **Mode 3 (s3dlio arrow, 8 workers)** at 164 MB/s edges the PyArrow serial baseline. On local NVMe decode CPU cost dominates; on S3 with real network latency the concurrent pipeline advantage grows substantially — s3dlio holds a warm connection pool and overlaps I/O with Rust-side Parquet→Arrow decode entirely off the GIL.
+- Sweet spot is 8 workers for 32 RGs (one worker per 4 RGs). Beyond that, thread-switching overhead on small tasks flattens the curve.
+- `configure_tokio_threads()` is now called in both `ParquetReaderS3dlio.__init__` and `ParquetReaderS3dlioArrow.__init__` so the Tokio thread budget is MPI-aware from the first call.
