@@ -258,6 +258,7 @@ class ConfigArguments:
     parquet_row_group_size: int = 1024
     parquet_partition_by: Optional[str] = None
     parquet_generation_batch_size: int = 0
+    parquet_use_s3dlio_gen: bool = False
 
     ## dataset: hdf5-only
     num_dset_per_record: int = 1
@@ -479,10 +480,9 @@ class ConfigArguments:
                 )
 
             if storage_library == "s3torchconnector":
-                # s3torchconnector only supports NPZ and NPY data formats for training.
-                # For checkpoint-only runs (train=False), data format doesn't apply.
-                if self.do_train and self.format not in (FormatType.NPZ, FormatType.NPY):
-                    raise Exception(f"For S3 using s3torchconnector, only NPZ or NPY formats are supported. Got format {self.format}")
+                # s3torchconnector supports NPZ, NPY, and Parquet data formats.
+                # Parquet is handled by ParquetReaderS3Iterable (byte-range GETs via
+                # S3ReaderConstructor.range_based()). No format restriction needed.
                 # Validate that s3torchconnector is installed
                 try:
                     from s3torchconnector._s3client import S3Client, S3ClientConfig
@@ -838,8 +838,12 @@ class ConfigArguments:
         self.record_element_dtype = np.dtype(self.record_element_type)
         self.record_element_bytes = self.record_element_dtype.itemsize
 
-        # hdf5 specific derivations
-        self.record_length = np.prod(self.record_dims) * self.record_element_bytes
+        # hdf5 / record_dims specific derivations — only override record_length when
+        # record_dims is explicitly set. When record_length_bytes is used instead
+        # (e.g. NPZ/NPY/Image workloads with variable-size objects), np.prod([]) = 1
+        # would silently overwrite the correct user-supplied value with 1 byte.
+        if self.record_dims:
+            self.record_length = np.prod(self.record_dims) * self.record_element_bytes
 
         self.transformed_record_element_dtype = np.dtype(self.transformed_record_element_type)
 
@@ -1393,6 +1397,8 @@ def LoadConfig(args, config):
                 args.parquet_partition_by = str(pq_cfg['partition_by'])
             if 'generation_batch_size' in pq_cfg:
                 args.parquet_generation_batch_size = int(pq_cfg['generation_batch_size'])
+            if 'use_s3dlio_gen' in pq_cfg:
+                args.parquet_use_s3dlio_gen = bool(pq_cfg['use_s3dlio_gen'])
 
         # hdf5 only config
         if 'hdf5' in config['dataset']:
