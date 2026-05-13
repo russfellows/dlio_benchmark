@@ -57,9 +57,14 @@ log_cli_level = "INFO"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 
-# NOTE: remove the [tool.uv.sources] s3dlio entry below once s3dlio>=0.9.100 is published to PyPI.
-[tool.uv.sources]
-s3dlio = { path = "../s3dlio/target/wheels/s3dlio-0.9.100-cp312-cp312-manylinux_2_39_x86_64.whl" }
+# To use a local s3dlio wheel during development, uncomment [tool.uv.sources]:
+# [tool.uv.sources]
+# s3dlio = { path = "../s3dlio/target/wheels/s3dlio-0.9.100-cp312-cp312-manylinux_2_39_x86_64.whl" }
+
+# s3dlio only ships Linux wheels — restrict resolution to Linux to avoid
+# uv failing on the Windows split when no win32 wheel is available.
+[tool.uv]
+environments = ["sys_platform == 'linux'"]
 
 [dependency-groups]
 dev = [
