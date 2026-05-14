@@ -395,14 +395,16 @@ class ConfigArguments:
             total_workers = self.read_threads * self.comm_size
             # 512 MB per spawned worker is the minimum observed RSS (framework imports only).
             per_worker_mb = 512
-            BUDGET_MB = 32 * 1024  # 32 GB hard cap regardless of machine size
+            # Use actual installed RAM so large machines aren't blocked (#372).
+            # Spawning more workers than can fit in RAM is still an error.
+            BUDGET_MB = psutil.virtual_memory().total // (1024 * 1024)
             estimated_mb = per_worker_mb * total_workers
             if estimated_mb > BUDGET_MB:
                 max_threads = BUDGET_MB // per_worker_mb // max(1, self.comm_size)
                 raise Exception(
                     f"Memory budget exceeded: reader.read_threads={self.read_threads} "
                     f"x comm_size={self.comm_size} = {total_workers} worker processes, "
-                    f"estimated ~{estimated_mb // 1024} GB (hard cap: 32 GB). "
+                    f"estimated ~{estimated_mb // 1024} GB (host RAM: {BUDGET_MB // 1024} GB). "
                     f"Reduce reader.read_threads to at most {max_threads} for this run."
                 )
             # Also warn if estimated usage exceeds 50% of available RAM on this machine
